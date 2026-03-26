@@ -1,0 +1,35 @@
+---
+description: Core project conventions for vrp-model development
+alwaysApply: true
+---
+
+# Project Conventions
+
+## Code style
+
+- Follow **PEP 8** for layout, imports, spacing, line length, and general Python style.
+- Use **snake_case** for **functions**, **methods**, and **module-level variables**; **PascalCase** for **classes**; **UPPER_SNAKE_CASE** for **module-level constants**.
+- Prefer descriptive names; align with what **ruff** enforces in this repo (run `ruff check` / `ruff format` after edits).
+
+## Testing
+
+- Use `unittest` (not pytest) for writing and running unit tests.
+- Run tests via: `uv run python -m unittest discover -s tests`
+
+## Package Manager
+
+- Always use `uv` for dependency management, package installation, and running tools.
+- Do **not** manually activate the virtual environment; `uv run` handles it automatically.
+- Install packages: `uv pip install <package>`
+- Sync dependencies: `uv sync`
+- Build the project: `uv build`
+
+## Linting and formatting
+
+- Use **ruff** for linting and formatting (not black).
+- Run: `uv run ruff check vrp_model` and `uv run ruff format vrp_model` (or `ruff format vrp_model --check` to only check).
+
+## Type checking
+
+- Use **ty** for type checking (not mypy or pyright).
+- Run type checks via: `uv run ty check vrp_model`

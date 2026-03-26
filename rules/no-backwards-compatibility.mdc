@@ -1,0 +1,15 @@
+---
+description: Do not preserve backward compatibility when changing this project
+alwaysApply: true
+---
+
+# No backward compatibility
+
+When changing **vrp-model / vrpulp** (public APIs, module layout, type names, dict keys, config, or behavior):
+
+- **Do not** keep deprecated aliases, compatibility shims, re-exports “for old code,” dual naming, or version branches whose only purpose is to avoid breaking callers.
+- **Do not** hesitate to rename types, move modules, or change signatures because external or hypothetical users might rely on the old shape.
+- Prefer **one clear name and one behavior**; update **all in-repo** imports, tests, and docs in the same change.
+- If something must remain stable for a short internal transition, treat that as an explicit exception and remove it in a follow-up—do not add open-ended compatibility layers.
+
+This project is allowed to break its own API freely until you decide otherwise; optimize for clarity and correctness, not migration ergonomy.

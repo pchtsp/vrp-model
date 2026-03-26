@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+      - name: Sync (with PyVRP for integration test)
+        run: uv sync --extra pyvrp --group dev
+      - name: Ruff
+        run: uv run ruff check vrp_model tests && uv run ruff format vrp_model tests --check
+      - name: Ty
+        run: uv run ty check vrp_model
+      - name: Unit tests
+        run: uv run python -m unittest discover -s tests
