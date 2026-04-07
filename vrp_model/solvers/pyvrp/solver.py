@@ -347,9 +347,8 @@ class PyVRPSolver(Solver):
         job_ids = _job_node_ids_ordered(model)
         if not job_ids:
             model._solution = Solution(routes=[])
-            return SolutionStatus.from_mapped(
-                model,
-                SolveStatus.FEASIBLE,
+            return SolutionStatus(
+                mapped_status=SolveStatus.FEASIBLE,
                 solver_name=self.name,
                 wall_time_seconds=0.0,
                 optimality_gap=None,
@@ -358,6 +357,7 @@ class PyVRPSolver(Solver):
                 solution_found=True,
                 iterations=0,
                 error_message=None,
+                solver_status="",
             )
 
         if PyVRPModel is None or PyVRPMaxRuntime is None:
@@ -382,9 +382,8 @@ class PyVRPSolver(Solver):
         else:
             stop_reason = SolverStopReason.INFEASIBLE
 
-        return SolutionStatus.from_mapped(
-            model,
-            raw_status,
+        return SolutionStatus(
+            mapped_status=raw_status,
             solver_name=self.name,
             wall_time_seconds=elapsed,
             optimality_gap=None,
@@ -393,4 +392,5 @@ class PyVRPSolver(Solver):
             solution_found=True,
             iterations=int(result.num_iterations),
             error_message=None,
+            solver_status=result.summary(),
         )

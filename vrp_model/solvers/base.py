@@ -20,7 +20,7 @@ class Solver(ABC):
 
     @abstractmethod
     def _run(self, model: Model, options: dict) -> SolutionStatus:
-        """Attach ``model._solution`` and return run statistics (including mapped status)."""
+        """Attach ``model._solution`` and return run statistics (including :class:`SolveStatus`)."""
         ...
 
     def solve(self, model: Model, options: dict | None = None) -> SolutionStatus:

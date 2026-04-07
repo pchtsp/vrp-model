@@ -273,12 +273,6 @@ class Model:
         """Same as :meth:`detect_features`."""
         return self.detect_features()
 
-    def map_status(self, status: object) -> SolveStatus:
-        """Map a solver-specific status object to :class:`SolveStatus`."""
-        if isinstance(status, SolveStatus):
-            return status
-        return SolveStatus.UNKNOWN
-
     @property
     def solution(self) -> Solution | None:
         """Last solution attached by a solver, if any."""

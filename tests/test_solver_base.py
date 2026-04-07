@@ -24,14 +24,17 @@ class FakeSolver(Solver):
         if jobs:
             routes = [Route(vehicle=v, start_depot=d, end_depot=d, jobs=[jobs[0]])]
         model._solution = Solution(routes=routes)
-        return SolutionStatus.from_mapped(
-            model,
-            SolveStatus.FEASIBLE,
+        return SolutionStatus(
+            mapped_status=SolveStatus.FEASIBLE,
             solver_name=self.name,
             wall_time_seconds=0.0,
+            optimality_gap=None,
             solver_reported_cost=0.0,
             stop_reason=SolverStopReason.FEASIBLE,
             solution_found=True,
+            iterations=None,
+            error_message=None,
+            solver_status="",
         )
 
 

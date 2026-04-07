@@ -2,6 +2,7 @@
 
 import unittest
 
+from vrp_model import SolveStatus
 from vrp_model.solvers.base import Solver
 from vrp_model.solvers.registry import get, register
 from vrp_model.solvers.status import SolutionStatus, SolverStopReason
@@ -12,11 +13,17 @@ class _Dummy(Solver):
     supported_features = frozenset()
 
     def _run(self, model, options):  # noqa: ARG002
-        return SolutionStatus.from_mapped(
-            model,
-            object(),
+        return SolutionStatus(
+            mapped_status=SolveStatus.UNKNOWN,
             solver_name=self.name,
+            wall_time_seconds=None,
+            optimality_gap=None,
+            solver_reported_cost=None,
             stop_reason=SolverStopReason.UNKNOWN,
+            solution_found=False,
+            iterations=None,
+            error_message=None,
+            solver_status="",
         )
 
 
