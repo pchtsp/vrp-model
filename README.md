@@ -12,7 +12,9 @@ Travel is stored as a **sparse** map **`(from_id, to_id) → TravelEdgeAttrs`**,
 
 If **`travel_edges`** is **non-empty**, PyVRP treats **every** arc as matrix-only: any directed pair **not** in the map also gets infinite distance and duration (no Euclidean fallback). If **`travel_edges`** is **empty**, PyVRP uses **Euclidean** legs for all pairs, and **`validate()`** requires **every job** to have a **`location`** (no coordinates-only depot-only shortcuts).
 
-Use **`set_travel_edges(...)`** (values may be **`TravelEdgeAttrs`** or mappings with optional `distance` / `duration` keys), **`update_travel_edge(...)`** to merge one arc, and **`clear_travel_edges()`** to remove overrides. **`validate()`** also rejects invalid node ids, self-loops, negative values, unknown mapping keys, and jobs without locations when the travel map is empty.
+Use **`set_travel_edges(...)`** with **`TravelEdgeAttrs`** values only, **`update_travel_edge(...)`** to merge one arc, and **`clear_travel_edges()`** to remove overrides. **`validate()`** also rejects invalid node ids, self-loops, negative values, and jobs without locations when the travel map is empty.
+
+After solving, **`Solver.solve`** returns a **`SolutionStatus`** (mapped status, timing, stop reason, solver-reported cost, etc.); the route structure is on **`model.solution`**. Use **`model.solution_cost()`**, **`model.is_solution_feasible()`**, and **`model.unassigned_jobs()`** for metrics (these raise **`SolutionUnavailableError`** if no solution is attached).
 
 PyVRP’s internal location order is **all depots** (by ascending `node_id`), then **all jobs** (by ascending `node_id`); the adapter maps that to your unified ids when reading solutions.
 
@@ -31,8 +33,9 @@ depot = model.add_depot(location=(0.0, 0.0), label="hub")
 vehicle = model.add_vehicle(10, depot, label="truck1")
 job = model.add_job(3, location=(1.0, 2.0))
 
-status = PyVRPSolver({"time_limit": 2.0, "msg": False}).solve(model)
+result = PyVRPSolver({"time_limit": 2.0, "msg": False}).solve(model)
 solution = model.solution
+assert result.mapped_status.name == "FEASIBLE"
 ```
 
 ## Development

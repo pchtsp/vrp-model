@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import unittest
 
-from vrp_model import Feature, Model, Solution, Solver, SolveStatus
+from vrp_model import Feature, Model, Route, Solution, Solver, SolveStatus
+from vrp_model.solvers.status import SolutionStatus, SolverStopReason
 
 
 class FakeSolver(Solver):
@@ -14,13 +15,23 @@ class FakeSolver(Solver):
     def __init__(self) -> None:
         self.solve_called = False
 
-    def _run(self, model: Model, options: dict) -> tuple[object, Solution]:
+    def _run(self, model: Model, options: dict) -> SolutionStatus:
         self.solve_called = True
-        return SolveStatus.FEASIBLE, Solution(
-            routes=[],
-            cost=0.0,
-            feasible=True,
-            unassigned=[],
+        d = next(iter(model.depots))
+        v = next(iter(model.vehicles))
+        routes: list[Route] = []
+        jobs = list(model.jobs)
+        if jobs:
+            routes = [Route(vehicle=v, start_depot=d, end_depot=d, jobs=[jobs[0]])]
+        model._solution = Solution(routes=routes)
+        return SolutionStatus.from_mapped(
+            model,
+            SolveStatus.FEASIBLE,
+            solver_name=self.name,
+            wall_time_seconds=0.0,
+            solver_reported_cost=0.0,
+            stop_reason=SolverStopReason.FEASIBLE,
+            solution_found=True,
         )
 
 
@@ -33,10 +44,11 @@ class TestSolverSolve(unittest.TestCase):
 
         s = FakeSolver()
         status = s.solve(m, None)
-        self.assertEqual(status, SolveStatus.FEASIBLE)
+        self.assertEqual(status.mapped_status, SolveStatus.FEASIBLE)
+        self.assertEqual(status.solver_name, "fake")
         self.assertTrue(s.solve_called)
         assert m.solution is not None
-        self.assertEqual(m.solution.feasible, True)
+        self.assertTrue(m.is_solution_feasible())
 
 
 if __name__ == "__main__":

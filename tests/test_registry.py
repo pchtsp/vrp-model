@@ -4,6 +4,7 @@ import unittest
 
 from vrp_model.solvers.base import Solver
 from vrp_model.solvers.registry import get, register
+from vrp_model.solvers.status import SolutionStatus, SolverStopReason
 
 
 class _Dummy(Solver):
@@ -11,7 +12,12 @@ class _Dummy(Solver):
     supported_features = frozenset()
 
     def _run(self, model, options):  # noqa: ARG002
-        raise NotImplementedError
+        return SolutionStatus.from_mapped(
+            model,
+            object(),
+            solver_name=self.name,
+            stop_reason=SolverStopReason.UNKNOWN,
+        )
 
 
 class TestRegistry(unittest.TestCase):

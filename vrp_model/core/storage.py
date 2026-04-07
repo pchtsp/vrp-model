@@ -17,4 +17,5 @@ def normalize_load(value: int | list[int]) -> LoadVec:
 
 
 def skills_to_frozen(skills: set[str] | frozenset[str]) -> frozenset[str]:
+    """Copy skill names to an immutable set for model storage."""
     return frozenset(skills)

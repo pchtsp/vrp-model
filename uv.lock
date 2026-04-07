@@ -625,34 +625,32 @@ wheels = [
 name = "vrp-model"
 version = "0.1.0"
 source = { editable = "." }
+dependencies = [
+    { name = "vrplib" },
+]
 
 [package.optional-dependencies]
 pyvrp = [
     { name = "pyvrp" },
-]
-vrplib = [
-    { name = "vrplib" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "ruff" },
     { name = "ty" },
-    { name = "vrplib" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "pyvrp", marker = "extra == 'pyvrp'", specifier = ">=0.9.0" },
-    { name = "vrplib", marker = "extra == 'vrplib'", specifier = ">=2.0.2" },
+    { name = "vrplib", specifier = ">=2.0.2" },
 ]
-provides-extras = ["pyvrp", "vrplib"]
+provides-extras = ["pyvrp"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "ruff", specifier = ">=0.8" },
     { name = "ty", specifier = ">=0.0.1" },
-    { name = "vrplib", specifier = ">=2.0.2" },
 ]
 
 [[package]]

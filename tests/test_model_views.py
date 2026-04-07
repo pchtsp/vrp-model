@@ -3,6 +3,7 @@
 import unittest
 
 from vrp_model import Depot, Job, Model, NodeKind, ValidationError
+from vrp_model.core.records import PickupDeliveryRecord
 
 
 class TestModelViews(unittest.TestCase):
@@ -11,25 +12,25 @@ class TestModelViews(unittest.TestCase):
         d = m.add_depot(location=(0.0, 0.0), label="hub")
         self.assertEqual(d.label, "hub")
         self.assertEqual(d.node_id, 0)
-        self.assertEqual(m._nodes[0]["kind"], NodeKind.DEPOT)
+        self.assertEqual(m._nodes[0].kind, NodeKind.DEPOT)
         d.location = (1.0, 2.0)
-        self.assertEqual(m._nodes[0]["location"], (1.0, 2.0))
+        self.assertEqual(m._nodes[0].location, (1.0, 2.0))
 
         v = m.add_vehicle(10, d)
         self.assertEqual(v.capacity, [10])
         self.assertEqual(v.start_depot.node_id, d.node_id)
         self.assertEqual(v.end_depot.node_id, v.start_depot.node_id)
-        self.assertEqual(len(m.depots), 1)
-        self.assertEqual(len(m.vehicles), 1)
+        self.assertEqual(len(list(m.depots)), 1)
+        self.assertEqual(len(list(m.vehicles)), 1)
         v.capacity = [5, 5]
-        self.assertEqual(m._vehicles[0]["capacity"], [5, 5])
+        self.assertEqual(m._vehicles[0].capacity, [5, 5])
 
         j = m.add_job(2, location=(3.0, 4.0))
         self.assertEqual(j.node_id, 1)
-        self.assertEqual(len(m.jobs), 1)
+        self.assertEqual(len(list(m.jobs)), 1)
         self.assertEqual(j.demand, [2])
         j.service_time = 7
-        self.assertEqual(m._nodes[1]["service_time"], 7)
+        self.assertEqual(m._nodes[1].service_time, 7)
 
     def test_pickup_delivery_list(self) -> None:
         m = Model()
@@ -40,7 +41,7 @@ class TestModelViews(unittest.TestCase):
         m.add_pickup_delivery(p1, p2)
         self.assertEqual(
             m._pickup_deliveries,
-            [{"pickup_job_node_id": 1, "delivery_job_node_id": 2}],
+            [PickupDeliveryRecord(pickup_job_node_id=1, delivery_job_node_id=2)],
         )
 
     def test_depot_from_other_model_rejected(self) -> None:

@@ -31,7 +31,7 @@ class TestConsistency(unittest.TestCase):
         m = Model()
         d = m.add_depot()
         m.add_vehicle([], d)
-        m._vehicles[0]["start_depot_node_id"] = 99
+        m._vehicles[0].start_depot_node_id = 99
         with self.assertRaises(ValidationError):
             m.validate()
 
@@ -70,7 +70,7 @@ class TestTravelEdges(unittest.TestCase):
         m = Model()
         d = m.add_depot()
         m.add_vehicle([], d)
-        m.set_travel_edges({(0, 0): {"distance": 1}})
+        m.set_travel_edges({(0, 0): TravelEdgeAttrs(distance=1)})
         with self.assertRaises(ValidationError):
             m.validate()
 
@@ -98,7 +98,7 @@ class TestTravelEdges(unittest.TestCase):
         d = m.add_depot()
         m.add_vehicle([], d)
         m.add_job(0, location=(0.0, 0.0))
-        m.set_travel_edges({(0, 1): {"distance": -1}})
+        m.set_travel_edges({(0, 1): TravelEdgeAttrs(distance=-1)})
         with self.assertRaises(ValidationError):
             m.validate()
 
@@ -107,7 +107,7 @@ class TestTravelEdges(unittest.TestCase):
         d = m.add_depot()
         m.add_vehicle([], d)
         m.add_job(0, location=(0.0, 0.0))
-        m.update_travel_edge(d, m.jobs[0], distance=1)
+        m.update_travel_edge(d, next(iter(m.jobs)), distance=1)
         m.clear_travel_edges()
         self.assertEqual(m._travel_edges, {})
         m.validate()
@@ -121,15 +121,15 @@ class TestTravelEdges(unittest.TestCase):
         with self.assertRaises(ValidationError):
             m.validate()
 
-    def test_unknown_inner_key(self) -> None:
+    def test_set_travel_edges_rejects_plain_dict_value(self) -> None:
         m = Model()
         d = m.add_depot()
         m.add_vehicle([], d)
         m.add_job(0, location=(0.0, 0.0))
         bad: dict[str, int] = {"distance": 1}
         bad["detour"] = 2
-        m.set_travel_edges({(0, 1): bad})
-        with self.assertRaises(ValidationError):
+        m.set_travel_edges({(0, 1): bad})  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
             m.validate()
 
 

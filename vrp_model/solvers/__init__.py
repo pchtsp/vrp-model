@@ -14,8 +14,11 @@ from vrp_model.solvers.options import (
     merge_solver_options,
 )
 from vrp_model.solvers.registry import get, register
+from vrp_model.solvers.status import SolutionStatus, SolverStopReason
 
 __all__ = [
+    "SolutionStatus",
+    "SolverStopReason",
     "GAP_ABS",
     "GAP_REL",
     "LOG_PATH",

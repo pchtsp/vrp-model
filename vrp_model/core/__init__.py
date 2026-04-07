@@ -2,15 +2,16 @@
 
 from vrp_model.core.errors import (
     MappingError,
+    SolutionUnavailableError,
     SolverCapabilityError,
     SolverNotInstalledError,
     ValidationError,
     VRPModelError,
 )
 from vrp_model.core.kinds import NodeKind
-from vrp_model.core.model import Feature, Model, SolveStatus, detect_features
+from vrp_model.core.model import Feature, Model, SolveStatus
 from vrp_model.core.solution import Route, Solution
-from vrp_model.core.travel_edges import TRAVEL_COST_INF, TravelEdgeAttrs
+from vrp_model.core.travel_edges import TRAVEL_COST_INF, TravelEdgeAttrs, TravelEdgesMap
 from vrp_model.core.views import Depot, Job, Vehicle
 
 __all__ = [
@@ -25,10 +26,11 @@ __all__ = [
     "SolveStatus",
     "TRAVEL_COST_INF",
     "TravelEdgeAttrs",
+    "TravelEdgesMap",
     "SolverCapabilityError",
     "SolverNotInstalledError",
+    "SolutionUnavailableError",
     "ValidationError",
     "VRPModelError",
     "Vehicle",
-    "detect_features",
 ]

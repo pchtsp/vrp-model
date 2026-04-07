@@ -25,7 +25,9 @@ class VRPLibReadKey(StrEnum):
     DIMENSION = "dimension"
     VEHICLES = "vehicles"
     CAPACITY = "capacity"  # file spec ``CAPACITY`` (homogeneous fleet)
-    CAPACITY_SECTION = "capacity_section"  # file section ``CAPACITY_SECTION`` (per vehicle)
+    CAPACITY_SECTION = (
+        "capacity_section"  # file section ``CAPACITY_SECTION`` (per vehicle)
+    )
     NODE_COORD = "node_coord"
     DEMAND = "demand"
     DEPOT = "depot"

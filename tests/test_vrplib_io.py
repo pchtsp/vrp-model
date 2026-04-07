@@ -9,8 +9,13 @@ from pathlib import Path
 import numpy as np
 import vrplib
 
-from vrp_model import Feature
-from vrp_model.io.vrplib_io import read_model, vrplib_dict_to_model, write_vrplib_instance
+from vrp_model import Feature, Model, Route, Solution, SolutionUnavailableError
+from vrp_model.io.vrplib_io import (
+    read_model,
+    vrplib_dict_to_model,
+    write_vrplib_instance,
+    write_vrplib_solution,
+)
 
 _FIXTURES = Path(__file__).resolve().parent / "fixtures" / "vrplib"
 
@@ -21,9 +26,9 @@ class TestVRPLIBIO(unittest.TestCase):
         raw = vrplib.read_instance(str(path), instance_format="vrplib")
 
         model = read_model(path, instance_format="vrplib")
-        self.assertEqual(len(model.depots), 1)
-        self.assertEqual(len(model.jobs), 12)
-        self.assertEqual(len(model.vehicles), 4)
+        self.assertEqual(len(list(model.depots)), 1)
+        self.assertEqual(len(list(model.jobs)), 12)
+        self.assertEqual(len(list(model.vehicles)), 4)
 
         cap = int(raw["capacity"])
         for v in model.vehicles:
@@ -42,10 +47,10 @@ class TestVRPLIBIO(unittest.TestCase):
         raw = vrplib.read_instance(str(path), instance_format="solomon")
 
         model = read_model(path, instance_format="solomon")
-        self.assertEqual(len(model.depots), 1)
+        self.assertEqual(len(list(model.depots)), 1)
         n_locs = int(np.asarray(raw["node_coord"]).shape[0])
-        self.assertEqual(len(model.jobs), n_locs - 1)
-        self.assertEqual(len(model.vehicles), int(raw["vehicles"]))
+        self.assertEqual(len(list(model.jobs)), n_locs - 1)
+        self.assertEqual(len(list(model.vehicles)), int(raw["vehicles"]))
 
         self.assertTrue(any(j.time_window is not None for j in model.jobs))
         self.assertIn(Feature.TIME_WINDOWS, model.features)
@@ -76,8 +81,8 @@ class TestVRPLIBIO(unittest.TestCase):
         }
 
         model = vrplib_dict_to_model(data)
-        self.assertEqual(len(model.depots), 2)
-        self.assertEqual(len(model.jobs), 1)
+        self.assertEqual(len(list(model.depots)), 2)
+        self.assertEqual(len(list(model.jobs)), 1)
 
         starts = [v.start_depot.node_id for v in model.vehicles]
         self.assertEqual(starts, [0, 1])
@@ -93,9 +98,32 @@ class TestVRPLIBIO(unittest.TestCase):
             write_vrplib_instance(out, m1)
             m2 = read_model(out, instance_format="vrplib")
         m2.validate()
-        self.assertEqual(len(m1.depots), len(m2.depots))
-        self.assertEqual(len(m1.jobs), len(m2.jobs))
-        self.assertEqual(len(m1.vehicles), len(m2.vehicles))
+        self.assertEqual(len(list(m1.depots)), len(list(m2.depots)))
+        self.assertEqual(len(list(m1.jobs)), len(list(m2.jobs)))
+        self.assertEqual(len(list(m1.vehicles)), len(list(m2.vehicles)))
+
+    def test_write_solution_requires_attached_solution(self) -> None:
+        m = Model()
+        d = m.add_depot(location=(0.0, 0.0))
+        m.add_vehicle([], d)
+        m.add_job(0, location=(1.0, 0.0))
+        m.validate()
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "sol.sol"
+            with self.assertRaises(SolutionUnavailableError):
+                write_vrplib_solution(out, m)
+
+    def test_write_solution_creates_file(self) -> None:
+        m = Model()
+        d = m.add_depot(location=(0.0, 0.0))
+        v = m.add_vehicle([], d)
+        j = m.add_job(0, location=(1.0, 0.0))
+        m.validate()
+        m._solution = Solution(routes=[Route(vehicle=v, start_depot=d, end_depot=d, jobs=[j])])
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "sol.sol"
+            write_vrplib_solution(out, m)
+            self.assertTrue(out.is_file())
 
 
 if __name__ == "__main__":

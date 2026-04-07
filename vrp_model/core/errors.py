@@ -19,3 +19,7 @@ class SolverNotInstalledError(VRPModelError):
 
 class MappingError(VRPModelError):
     """Canonical model ↔ solver-native conversion failed."""
+
+
+class SolutionUnavailableError(VRPModelError):
+    """Raised when a method requires an attached solution but ``model.solution`` is ``None``."""
