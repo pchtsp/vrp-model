@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Literal, TypedDict, cast
+from typing import Any, Literal, TypedDict
 
 import numpy as np
 import vrplib
@@ -89,13 +89,12 @@ def read_model(
 ) -> Model:
     """Parse a file with :func:`vrplib.read_instance` and build a :class:`Model`."""
     data = vrplib.read_instance(str(path), instance_format=instance_format)
-    return vrplib_dict_to_model(cast(VRPLibReadDict, data))
+    return vrplib_dict_to_model(data)
 
 
 def write_vrplib_instance(path: str | Path, model: Model) -> None:
     """Write a ``.vrp``-style instance using :func:`vrplib.write_instance`."""
-    payload: dict[str, Any] = cast(dict[str, Any], model_to_vrplib_dict(model))
-    vrplib.write_instance(str(path), payload)
+    vrplib.write_instance(str(path), model_to_vrplib_dict(model))
 
 
 def write_vrplib_solution(path: str | Path, solution: Solution) -> None:
@@ -116,17 +115,17 @@ def solution_to_vrplib_routes(solution: Solution) -> list[list[int]]:
 
 
 def vrplib_dict_to_model(data: VRPLibReadDict) -> Model:
-    """Build a :class:`Model` from a dict returned by :func:`vrplib.read_instance`."""
-    # TypedDict keys must be string literals for the type checker; ``StrEnum`` members
-    # are str at runtime but not ``Literal[...]``, so use a plain mapping for lookups.
-    inst: Mapping[str, Any] = cast(Mapping[str, Any], data)
+    """Build a :class:`Model` from a dict returned by :func:`vrplib.read_instance`.
+
+    Expected shape: :class:`VRPLibReadDict` (and any extra keys ``vrplib`` preserves).
+    """
     model = Model()
 
-    node_coord = inst.get(VRPLibReadKey.NODE_COORD)
-    demand = _delivery_demand_vector(inst)
+    node_coord = data.get(VRPLibReadKey.NODE_COORD)
+    demand = _delivery_demand_vector(data)
     n_locs = int(demand.shape[0])
 
-    depot_raw = inst.get(VRPLibReadKey.DEPOT)
+    depot_raw = data.get(VRPLibReadKey.DEPOT)
     if depot_raw is None:
         depot_idxs = np.array([0], dtype=int)
     else:
@@ -140,8 +139,8 @@ def vrplib_dict_to_model(data: VRPLibReadDict) -> Model:
         depot_by_orig[orig_idx] = model.add_depot(location=loc)
         unified_by_orig[orig_idx] = depot_by_orig[orig_idx].node_id
 
-    linehaul = _optional_array(inst, VRPLibReadKey.LINEHAUL)
-    backhaul = _optional_array(inst, VRPLibReadKey.BACKHAUL)
+    linehaul = _optional_array(data, VRPLibReadKey.LINEHAUL)
+    backhaul = _optional_array(data, VRPLibReadKey.BACKHAUL)
 
     job_by_orig: dict[int, Job] = {}
     for orig_idx in range(n_locs):
@@ -150,18 +149,18 @@ def vrplib_dict_to_model(data: VRPLibReadDict) -> Model:
         dem = int(demand[orig_idx])
         loc = _node_location(node_coord, orig_idx)
         service_time = 0
-        if VRPLibReadKey.SERVICE_TIME in inst:
-            st = np.asarray(inst[VRPLibReadKey.SERVICE_TIME], dtype=int).reshape(-1)
+        if VRPLibReadKey.SERVICE_TIME in data:
+            st = np.asarray(data[str(VRPLibReadKey.SERVICE_TIME)], dtype=int).reshape(-1)
             service_time = int(st[orig_idx])
 
         tw: tuple[int, int] | None = None
-        if VRPLibReadKey.TIME_WINDOW in inst:
-            tw_arr = np.asarray(inst[VRPLibReadKey.TIME_WINDOW])
+        if VRPLibReadKey.TIME_WINDOW in data:
+            tw_arr = np.asarray(data[str(VRPLibReadKey.TIME_WINDOW)])
             tw = (int(tw_arr[orig_idx, 0]), int(tw_arr[orig_idx, 1]))
 
         prize: float | None = None
-        if VRPLibReadKey.PRIZE in inst:
-            pr = np.asarray(inst[VRPLibReadKey.PRIZE]).reshape(-1)
+        if VRPLibReadKey.PRIZE in data:
+            pr = np.asarray(data[str(VRPLibReadKey.PRIZE)]).reshape(-1)
             prize_val = float(pr[orig_idx])
             prize = None if prize_val == 0.0 else prize_val
 
@@ -225,10 +224,10 @@ def vrplib_dict_to_model(data: VRPLibReadDict) -> Model:
 
         unified_by_orig[orig_idx] = job_by_orig[orig_idx].node_id
 
-    vehicles_depot = _vehicles_depot_array(inst)
-    n_veh = _resolve_vehicle_count(inst, n_clients=max(n_locs - len(depot_set), 0))
+    vehicles_depot = _vehicles_depot_array(data)
+    n_veh = _resolve_vehicle_count(data, n_clients=max(n_locs - len(depot_set), 0))
 
-    cap_each = _vehicle_capacities(inst, n_veh=n_veh)
+    cap_each = _vehicle_capacities(data, n_veh=n_veh)
 
     default_depot_orig = int(depot_idxs.min())
     for veh in range(n_veh):
@@ -238,11 +237,11 @@ def vrplib_dict_to_model(data: VRPLibReadDict) -> Model:
         start = depot_by_orig[start_orig]
         model.add_vehicle(cap_each[veh], start, end_depot=start)
 
-    edge_weight_raw = inst.get(VRPLibReadKey.EDGE_WEIGHT)
+    edge_weight_raw = data.get(VRPLibReadKey.EDGE_WEIGHT)
     if edge_weight_raw is None:
         raise KeyError(VRPLibReadKey.EDGE_WEIGHT)
     dist = _square_matrix(edge_weight_raw, n_locs)
-    dur = _optional_square_matrix(inst, n_locs)
+    dur = _optional_square_matrix(data, n_locs)
 
     edges: dict[tuple[int, int], TravelEdgeAttrs] = {}
     for u_orig in range(n_locs):
@@ -259,18 +258,19 @@ def vrplib_dict_to_model(data: VRPLibReadDict) -> Model:
     return model
 
 
-def model_to_vrplib_dict(model: Model) -> VRPLibWriteDict:
-    """Build a dict for :func:`vrplib.write_instance` from a :class:`Model`."""
+def model_to_vrplib_dict(model: Model) -> dict[str, str | int | float | np.ndarray]:
+    """Build a dict for :func:`vrplib.write_instance` from a :class:`Model`.
+
+    Keys and value kinds match :class:`VRPLibWriteDict`; the return type is the
+    concrete ``dict`` accepted by ``vrplib.write_instance``.
+    """
     n = len(model._nodes)
     if n == 0:
-        return cast(
-            VRPLibWriteDict,
-            {
-                write_spec_key(VRPLibReadKey.NAME): "empty",
-                write_spec_key(VRPLibReadKey.DIMENSION): 0,
-                write_spec_key(VRPLibReadKey.TYPE): "CVRP",
-            },
-        )
+        return {
+            write_spec_key(VRPLibReadKey.NAME): "empty",
+            write_spec_key(VRPLibReadKey.DIMENSION): 0,
+            write_spec_key(VRPLibReadKey.TYPE): "CVRP",
+        }
 
     demands: list[int] = []
     coords: list[list[float]] = []
@@ -333,7 +333,7 @@ def model_to_vrplib_dict(model: Model) -> VRPLibWriteDict:
 
     # ``vrplib.write_instance`` emits items in dict order; specifications (scalars)
     # must precede all array sections or ``read_instance`` raises.
-    out: dict[str, Any] = {
+    out: dict[str, str | int | float | np.ndarray] = {
         write_spec_key(VRPLibReadKey.NAME): "model",
         write_spec_key(VRPLibReadKey.TYPE): "CVRP",
         write_spec_key(VRPLibReadKey.DIMENSION): n,
@@ -361,7 +361,7 @@ def model_to_vrplib_dict(model: Model) -> VRPLibWriteDict:
     if use_edges or not has_coord:
         out[write_section_key(VRPLibReadKey.EDGE_WEIGHT)] = edge_mat
 
-    return cast(VRPLibWriteDict, out)
+    return out
 
 
 def _delivery_demand_vector(data: Mapping[str, Any]) -> NDArray[np.int_]:
@@ -371,7 +371,7 @@ def _delivery_demand_vector(data: Mapping[str, Any]) -> NDArray[np.int_]:
     return np.asarray(data[VRPLibReadKey.DEMAND], dtype=int).reshape(-1)
 
 
-def _optional_array(data: Mapping[str, Any], key: str) -> NDArray[np.int_] | None:
+def _optional_array(data: Mapping[str, Any], key: str | VRPLibReadKey) -> NDArray[np.int_] | None:
     if key not in data:
         return None
     return np.asarray(data[key], dtype=int).reshape(-1)

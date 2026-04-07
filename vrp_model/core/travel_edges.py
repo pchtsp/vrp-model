@@ -60,7 +60,7 @@ def _coerce_edge_value(
 
 def parse_travel_edges(
     n_nodes: int,
-    edges: dict[tuple[int, int], TravelEdgeAttrs | Mapping[str, int]],
+    edges: dict[tuple[int, int], TravelEdgeAttrs],
 ) -> dict[tuple[int, int], TravelEdgeAttrs]:
     """Validate ``edges`` against ``n_nodes`` and return a normalized copy."""
     out: dict[tuple[int, int], TravelEdgeAttrs] = {}

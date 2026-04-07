@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from vrp_model.core.errors import ValidationError
 from vrp_model.core.kinds import NodeKind
-from vrp_model.core.travel_edges import TravelEdgeAttrs, parse_travel_edges
+from vrp_model.core.travel_edges import parse_travel_edges
 
 if TYPE_CHECKING:
     from vrp_model.core.model import Model
@@ -55,10 +54,7 @@ def validate(model: Model) -> None:
 
     if model._travel_edges:
         normalized = parse_travel_edges(len(model._nodes), model._travel_edges)
-        model._travel_edges = cast(
-            dict[tuple[int, int], TravelEdgeAttrs | Mapping[str, int]],
-            normalized,
-        )
+        model._travel_edges = normalized
 
 
 def _vehicle_tag(model: Model, vi: int) -> str:
