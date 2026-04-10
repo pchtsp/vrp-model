@@ -8,6 +8,7 @@ dependencies = ["vrplib>=2.0.2"]
 
 [project.optional-dependencies]
 pyvrp = ["pyvrp>=0.9.0"]
+ortools = ["ortools>=9.10"]
 
 [dependency-groups]
 dev = [

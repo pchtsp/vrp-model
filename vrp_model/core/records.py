@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from vrp_model.core.kinds import NodeKind
+from vrp_model.core.time_window_flex import TimeWindowFlex
 
 
 @dataclass(slots=True)
@@ -24,7 +25,8 @@ class JobNodeRecord(DepotNodeRecord):
     service_time: int
     time_window: tuple[int, int] | None
     skills_required: frozenset[str]
-    prize: float | None
+    prize: float | None = None
+    time_window_flex: TimeWindowFlex | None = None
 
 
 @dataclass(slots=True)
@@ -36,7 +38,12 @@ class VehicleRecord:
     start_depot_node_id: int
     end_depot_node_id: int | None
     skills: frozenset[str]
-    time_window: tuple[int, int] | None
+    time_window: tuple[int, int] | None = None
+    time_window_flex: TimeWindowFlex | None = None
+    fixed_use_cost: int = 0
+    max_route_distance: int | None = None
+    max_route_time: int | None = None
+    max_slack_time: int | None = None
 
 
 @dataclass(slots=True)

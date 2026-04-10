@@ -11,6 +11,7 @@ from vrp_model.core.errors import (
 from vrp_model.core.kinds import NodeKind
 from vrp_model.core.model import Feature, Model, SolveStatus
 from vrp_model.core.solution import Route, Solution
+from vrp_model.core.time_window_flex import TimeWindowFlex
 from vrp_model.core.travel_edges import TRAVEL_COST_INF, TravelEdgeAttrs, TravelEdgesMap
 from vrp_model.core.views import Depot, Job, Vehicle
 
@@ -27,6 +28,7 @@ __all__ = [
     "TRAVEL_COST_INF",
     "TravelEdgeAttrs",
     "TravelEdgesMap",
+    "TimeWindowFlex",
     "SolverCapabilityError",
     "SolverNotInstalledError",
     "SolutionUnavailableError",

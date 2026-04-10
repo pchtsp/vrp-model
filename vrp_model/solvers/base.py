@@ -5,7 +5,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from vrp_model.core.model import Feature, Model
-from vrp_model.solvers.options import merge_solver_options
 from vrp_model.solvers.status import SolutionStatus
 
 
@@ -19,16 +18,12 @@ class Solver(ABC):
         return {}
 
     @abstractmethod
-    def _run(self, model: Model, options: dict) -> SolutionStatus:
+    def _run(self, model: Model) -> SolutionStatus:
         """Attach ``model._solution`` and return run statistics (including :class:`SolveStatus`)."""
         ...
 
-    def solve(self, model: Model, options: dict | None = None) -> SolutionStatus:
-        """Validate ``model``, check compatibility, merge options, run :meth:`_run`."""
+    def solve(self, model: Model) -> SolutionStatus:
+        """Validate ``model``, check solver compatibility, run :meth:`_run`."""
         model.validate()
         model.check_solver_compatibility(self)
-        opts = merge_solver_options(
-            self._default_solve_options(),
-            options,
-        )
-        return self._run(model, opts)
+        return self._run(model)

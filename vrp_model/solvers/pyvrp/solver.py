@@ -134,13 +134,6 @@ class PyVRPSolver(Solver):
     def __init__(self, options: dict | None = None) -> None:
         self._options = merge_solver_options(options)
 
-    def solve(self, model: Model, options: dict | None = None) -> SolutionStatus:
-        """Solve using only ``self._options`` from initialization; ``options`` is ignored."""
-        return super().solve(model, None)
-
-    def _default_solve_options(self) -> dict:
-        return dict(self._options)
-
     def build_solver_model(self, model: Model) -> PyVRPModelLike:
         """Build PyVRP model from canonical ``model``. Read-only on ``self``."""
         pmc = PyVRPModel
@@ -342,8 +335,7 @@ class PyVRPSolver(Solver):
 
         return Solution(routes=routes_out)
 
-    def _run(self, model: Model, options: dict) -> SolutionStatus:
-        _ = options
+    def _run(self, model: Model) -> SolutionStatus:
         job_ids = _job_node_ids_ordered(model)
         if not job_ids:
             model._solution = Solution(routes=[])

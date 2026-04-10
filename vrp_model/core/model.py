@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from enum import Enum, auto
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from vrp_model.core.errors import (
     SolutionUnavailableError,
@@ -21,6 +21,7 @@ from vrp_model.core.records import (
 )
 from vrp_model.core.solution import Solution
 from vrp_model.core.storage import normalize_load, skills_to_frozen
+from vrp_model.core.time_window_flex import TimeWindowFlex
 from vrp_model.core.travel_edges import TRAVEL_COST_INF, TravelEdgeAttrs, TravelEdgesMap
 from vrp_model.core.views import Depot, Job, Vehicle
 from vrp_model.utils.distance import euclidean_int
@@ -50,6 +51,11 @@ class Feature(Enum):
     HETEROGENEOUS_FLEET = auto()
     SKILLS = auto()
     PRIZE_COLLECTING = auto()
+    FLEXIBLE_TIME_WINDOWS = auto()
+    VEHICLE_FIXED_COST = auto()
+    MAX_ROUTE_DISTANCE = auto()
+    MAX_ROUTE_TIME = auto()
+    MAX_NODE_SLACK = auto()
 
 
 class Model:
@@ -156,6 +162,11 @@ class Model:
         label: str | None = None,
         skills: set[str] | frozenset[str] | None = None,
         time_window: tuple[int, int] | None = None,
+        time_window_flex: TimeWindowFlex | None = None,
+        fixed_use_cost: int = 0,
+        max_route_distance: int | None = None,
+        max_route_time: int | None = None,
+        max_slack_time: int | None = None,
     ) -> Vehicle:
         """Append a vehicle referencing start (and optional end) depots by view."""
         self._require_view_on_model(start_depot)
@@ -173,6 +184,11 @@ class Model:
             end_depot_node_id=end_nid,
             skills=skills_to_frozen(skills or frozenset()),
             time_window=time_window,
+            time_window_flex=time_window_flex,
+            fixed_use_cost=int(fixed_use_cost),
+            max_route_distance=max_route_distance,
+            max_route_time=max_route_time,
+            max_slack_time=max_slack_time,
         )
         self._vehicles.append(rec)
         return Vehicle(self, len(self._vehicles) - 1)
@@ -185,6 +201,7 @@ class Model:
         label: str | None = None,
         service_time: int = 0,
         time_window: tuple[int, int] | None = None,
+        time_window_flex: TimeWindowFlex | None = None,
         skills_required: set[str] | frozenset[str] | None = None,
         prize: float | None = None,
     ) -> Job:
@@ -201,6 +218,7 @@ class Model:
             time_window=time_window,
             skills_required=skills_to_frozen(skills_required or frozenset()),
             prize=prize,
+            time_window_flex=time_window_flex,
         )
         self._nodes.append(row)
         return Job(self, len(self._nodes) - 1)
@@ -239,12 +257,15 @@ class Model:
         for row in self._nodes:
             if row.kind != NodeKind.JOB:
                 continue
-            job_row = row
+            job_row = cast(JobNodeRecord, row)
             demand = job_row.demand
             if any(d > 0 for d in demand):
                 features.add(Feature.CAPACITY)
             if job_row.time_window is not None:
                 features.add(Feature.TIME_WINDOWS)
+            flex_j = job_row.time_window_flex
+            if flex_j is not None and flex_j.has_soft_penalties():
+                features.add(Feature.FLEXIBLE_TIME_WINDOWS)
             if job_row.skills_required:
                 features.add(Feature.SKILLS)
             if job_row.prize is not None:
@@ -253,6 +274,17 @@ class Model:
         for vehicle in self._vehicles:
             if vehicle.time_window is not None:
                 features.add(Feature.TIME_WINDOWS)
+            flex_v = vehicle.time_window_flex
+            if flex_v is not None and flex_v.has_soft_penalties():
+                features.add(Feature.FLEXIBLE_TIME_WINDOWS)
+            if vehicle.fixed_use_cost > 0:
+                features.add(Feature.VEHICLE_FIXED_COST)
+            if vehicle.max_route_distance is not None:
+                features.add(Feature.MAX_ROUTE_DISTANCE)
+            if vehicle.max_route_time is not None:
+                features.add(Feature.MAX_ROUTE_TIME)
+            if vehicle.max_slack_time is not None:
+                features.add(Feature.MAX_NODE_SLACK)
             cap = vehicle.capacity
             if len(cap) > 0:
                 features.add(Feature.CAPACITY)
@@ -371,9 +403,7 @@ class Model:
         return True
 
     def _uses_multi_depot(self) -> bool:
-        depot_ids = [
-            i for i, row in enumerate(self._nodes) if row.kind == NodeKind.DEPOT
-        ]
+        depot_ids = [i for i, row in enumerate(self._nodes) if row.kind == NodeKind.DEPOT]
         if len(depot_ids) > 1:
             return True
         starts = {v.start_depot_node_id for v in self._vehicles}
@@ -394,9 +424,14 @@ class Model:
             if (
                 v.capacity != first.capacity
                 or v.time_window != first.time_window
+                or v.time_window_flex != first.time_window_flex
                 or v.skills != first.skills
                 or v.start_depot_node_id != first.start_depot_node_id
                 or v.end_depot_node_id != first.end_depot_node_id
+                or v.fixed_use_cost != first.fixed_use_cost
+                or v.max_route_distance != first.max_route_distance
+                or v.max_route_time != first.max_route_time
+                or v.max_slack_time != first.max_slack_time
             ):
                 return True
         return False
@@ -439,6 +474,14 @@ class Model:
             if e is None or e.distance is None:
                 return TRAVEL_COST_INF
             return int(e.distance)
-        return euclidean_int(
-            self._planar_coord_for_node(u), self._planar_coord_for_node(v)
-        )
+        return euclidean_int(self._planar_coord_for_node(u), self._planar_coord_for_node(v))
+
+    def _directed_travel_duration(self, u: int, v: int) -> int:
+        if u == v:
+            return 0
+        if self._travel_edges:
+            e = self._travel_edges.get((u, v))
+            if e is None or e.duration is None:
+                return TRAVEL_COST_INF
+            return int(e.duration)
+        return euclidean_int(self._planar_coord_for_node(u), self._planar_coord_for_node(v))

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from vrp_model.core.errors import ValidationError
 from vrp_model.core.kinds import NodeKind
 from vrp_model.core.storage import normalize_load
+from vrp_model.core.time_window_flex import TimeWindowFlex
 
 if TYPE_CHECKING:
     from vrp_model.core.model import Model
@@ -124,6 +125,46 @@ class Vehicle:
     def time_window(self, value: tuple[int, int] | None) -> None:
         self._model._vehicles[self._idx].time_window = value
 
+    @property
+    def time_window_flex(self) -> TimeWindowFlex | None:
+        return self._model._vehicles[self._idx].time_window_flex
+
+    @time_window_flex.setter
+    def time_window_flex(self, value: TimeWindowFlex | None) -> None:
+        self._model._vehicles[self._idx].time_window_flex = value
+
+    @property
+    def fixed_use_cost(self) -> int:
+        return self._model._vehicles[self._idx].fixed_use_cost
+
+    @fixed_use_cost.setter
+    def fixed_use_cost(self, value: int) -> None:
+        self._model._vehicles[self._idx].fixed_use_cost = int(value)
+
+    @property
+    def max_route_distance(self) -> int | None:
+        return self._model._vehicles[self._idx].max_route_distance
+
+    @max_route_distance.setter
+    def max_route_distance(self, value: int | None) -> None:
+        self._model._vehicles[self._idx].max_route_distance = value
+
+    @property
+    def max_route_time(self) -> int | None:
+        return self._model._vehicles[self._idx].max_route_time
+
+    @max_route_time.setter
+    def max_route_time(self, value: int | None) -> None:
+        self._model._vehicles[self._idx].max_route_time = value
+
+    @property
+    def max_slack_time(self) -> int | None:
+        return self._model._vehicles[self._idx].max_slack_time
+
+    @max_slack_time.setter
+    def max_slack_time(self, value: int | None) -> None:
+        self._model._vehicles[self._idx].max_slack_time = value
+
 
 class Job:
     """Read/write view of a customer / stop row (demand, location, time window, skills, prize)."""
@@ -190,6 +231,14 @@ class Job:
     @time_window.setter
     def time_window(self, value: tuple[int, int] | None) -> None:
         self._model._nodes[self._node_id].time_window = value
+
+    @property
+    def time_window_flex(self) -> TimeWindowFlex | None:
+        return self._model._nodes[self._node_id].time_window_flex
+
+    @time_window_flex.setter
+    def time_window_flex(self, value: TimeWindowFlex | None) -> None:
+        self._model._nodes[self._node_id].time_window_flex = value
 
     @property
     def skills_required(self) -> frozenset[str]:

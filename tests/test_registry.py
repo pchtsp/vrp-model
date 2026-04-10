@@ -12,7 +12,7 @@ class _Dummy(Solver):
     name = "dummy"
     supported_features = frozenset()
 
-    def _run(self, model, options):  # noqa: ARG002
+    def _run(self, model):  # noqa: ARG002
         return SolutionStatus(
             mapped_status=SolveStatus.UNKNOWN,
             solver_name=self.name,

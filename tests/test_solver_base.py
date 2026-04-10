@@ -15,7 +15,7 @@ class FakeSolver(Solver):
     def __init__(self) -> None:
         self.solve_called = False
 
-    def _run(self, model: Model, options: dict) -> SolutionStatus:
+    def _run(self, model: Model) -> SolutionStatus:
         self.solve_called = True
         d = next(iter(model.depots))
         v = next(iter(model.vehicles))
@@ -46,7 +46,7 @@ class TestSolverSolve(unittest.TestCase):
         m.add_job(0, location=(0.0, 0.0))
 
         s = FakeSolver()
-        status = s.solve(m, None)
+        status = s.solve(m)
         self.assertEqual(status.mapped_status, SolveStatus.FEASIBLE)
         self.assertEqual(status.solver_name, "fake")
         self.assertTrue(s.solve_called)
