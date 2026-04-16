@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import cast
 
 from vrp_model.solvers.options import TIME_LIMIT, default_solver_options
 
@@ -35,6 +36,6 @@ def build_nextroute_engine_options(
     merged: dict[str, object],
     nextroute_options_cls: type,
 ) -> object:
-    tl = float(merged[TIME_LIMIT])
+    tl = float(cast(float | int, merged[TIME_LIMIT]))
     dur = max(tl, 0.1)
     return nextroute_options_cls(SOLVE_DURATION=dur)

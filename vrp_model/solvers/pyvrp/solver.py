@@ -9,6 +9,7 @@ from typing import cast
 from vrp_model.core.errors import MappingError, SolverNotInstalledError
 from vrp_model.core.kinds import NodeKind
 from vrp_model.core.model import Feature, Model, SolveStatus
+from vrp_model.core.records import JobNodeRecord
 from vrp_model.core.solution import Route, Solution
 from vrp_model.core.travel_edges import TRAVEL_COST_INF, TravelEdgesMap
 from vrp_model.core.views import Depot, Job, Vehicle
@@ -70,7 +71,7 @@ def _max_dims(model: Model) -> int:
         d = max(d, len(v.capacity))
     for row in model._nodes:
         if row.kind == NodeKind.JOB:
-            d = max(d, len(row.demand))
+            d = max(d, len(cast(JobNodeRecord, row).demand))
     return d
 
 
@@ -170,7 +171,8 @@ class PyVRPSolver(Solver):
             row = model._nodes[i]
             if row.kind != NodeKind.JOB:
                 continue
-            dem = _pad_vec(row.demand, dims)
+            job = cast(JobNodeRecord, row)
+            dem = _pad_vec(job.demand, dims)
             if i in pickup_ids:
                 delivery: list[int] = [0] * dims
                 pickup = dem
@@ -181,11 +183,11 @@ class PyVRPSolver(Solver):
                 delivery = dem
                 pickup = [0] * dims
 
-            x, y = xy_for_row(row.location)
-            tw = row.time_window
+            x, y = xy_for_row(job.location)
+            tw = job.time_window
             tw_early = int(tw[0]) if tw is not None else 0
             tw_late = int(tw[1]) if tw is not None else TW_LATE_DEFAULT
-            prize_raw = row.prize
+            prize_raw = job.prize
             if prize_raw is not None:
                 prize = int(round(float(prize_raw)))
                 required = False
@@ -193,13 +195,13 @@ class PyVRPSolver(Solver):
                 prize = 0
                 required = True
 
-            name = _export_name(row.label, i, "job")
+            name = _export_name(job.label, i, "job")
             c_obj = pm.add_client(
                 x,
                 y,
                 delivery=delivery,
                 pickup=pickup,
-                service_duration=int(row.service_time),
+                service_duration=int(job.service_time),
                 tw_early=tw_early,
                 tw_late=tw_late,
                 prize=prize,

@@ -47,14 +47,8 @@ def validate_travel_edges(
         if i == j:
             raise ValidationError(f"travel edge ({i}, {j}) must not be a self-loop")
         if attrs.distance is None and attrs.duration is None:
-            raise ValidationError(
-                f"travel edge ({i}, {j}) must set distance and/or duration"
-            )
+            raise ValidationError(f"travel edge ({i}, {j}) must set distance and/or duration")
         if attrs.distance is not None and attrs.distance < 0:
-            raise ValidationError(
-                f"travel edge ({i}, {j}) distance must be non-negative"
-            )
+            raise ValidationError(f"travel edge ({i}, {j}) distance must be non-negative")
         if attrs.duration is not None and attrs.duration < 0:
-            raise ValidationError(
-                f"travel edge ({i}, {j}) duration must be non-negative"
-            )
+            raise ValidationError(f"travel edge ({i}, {j}) duration must be non-negative")

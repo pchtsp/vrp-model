@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import vrplib
@@ -11,6 +12,7 @@ import vrplib
 from vrp_model.core.errors import SolutionUnavailableError
 from vrp_model.core.kinds import NodeKind
 from vrp_model.core.model import Model
+from vrp_model.core.records import JobNodeRecord
 from vrp_model.core.solution import Solution
 from vrp_model.core.travel_edges import TRAVEL_COST_INF
 from vrp_model.io.vrplib_keys import VRPLibReadKey, write_section_key, write_spec_key
@@ -66,7 +68,7 @@ def model_to_vrplib_dict(model: Model) -> dict[str, str | int | float | np.ndarr
     for i in range(n):
         row = model._nodes[i]
         if row.kind == NodeKind.JOB:
-            dem = row.demand
+            dem = cast(JobNodeRecord, row).demand
             demands.append(int(dem[0]) if dem else 0)
         else:
             demands.append(0)
@@ -110,8 +112,9 @@ def model_to_vrplib_dict(model: Model) -> dict[str, str | int | float | np.ndarr
     for i in range(n):
         row = model._nodes[i]
         if row.kind == NodeKind.JOB:
-            tw = row.time_window
-            st = row.service_time
+            job = cast(JobNodeRecord, row)
+            tw = job.time_window
+            st = job.service_time
         else:
             tw = None
             st = 0
@@ -144,20 +147,14 @@ def model_to_vrplib_dict(model: Model) -> dict[str, str | int | float | np.ndarr
     if has_tw:
         out[write_section_key(VRPLibReadKey.TIME_WINDOW)] = np.array(tw_rows, dtype=int)
     if has_st:
-        out[write_section_key(VRPLibReadKey.SERVICE_TIME)] = np.array(
-            st_rows, dtype=int
-        )
+        out[write_section_key(VRPLibReadKey.SERVICE_TIME)] = np.array(st_rows, dtype=int)
     if len(depot_1based) > 1:
         vdep = [model._vehicles[v].start_depot_node_id + 1 for v in range(n_veh)]
         out[write_section_key(VRPLibReadKey.VEHICLES_DEPOT)] = np.array(vdep, dtype=int)
     if len(set(caps)) > 1 and n_veh > 0:
-        out[write_section_key(VRPLibReadKey.CAPACITY_SECTION)] = np.array(
-            caps, dtype=int
-        )
+        out[write_section_key(VRPLibReadKey.CAPACITY_SECTION)] = np.array(caps, dtype=int)
     out[write_section_key(VRPLibReadKey.DEPOT)] = np.array(depot_1based, dtype=int)
     if use_edges or not has_coord:
-        out[write_section_key(VRPLibReadKey.EDGE_WEIGHT)] = np.array(
-            edge_mat, dtype=float
-        )
+        out[write_section_key(VRPLibReadKey.EDGE_WEIGHT)] = np.array(edge_mat, dtype=float)
 
     return out

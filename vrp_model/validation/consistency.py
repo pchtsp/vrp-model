@@ -24,9 +24,7 @@ def validate(model: Model) -> None:
             raise ValidationError(f"vehicle {tag} has invalid start_depot node id")
         end_nid = v.end_depot_node_id
         if end_nid is not None and (
-            end_nid < 0
-            or end_nid >= n_nodes
-            or model._nodes[end_nid].kind != NodeKind.DEPOT
+            end_nid < 0 or end_nid >= n_nodes or model._nodes[end_nid].kind != NodeKind.DEPOT
         ):
             raise ValidationError(f"vehicle {tag} has invalid end_depot node id")
 
@@ -44,14 +42,8 @@ def validate(model: Model) -> None:
         pickup = pd.pickup_job_node_id
         delivery = pd.delivery_job_node_id
         if pickup < 0 or pickup >= n_nodes or model._nodes[pickup].kind != NodeKind.JOB:
-            raise ValidationError(
-                f"pickup_delivery references invalid pickup job node id {pickup}"
-            )
-        if (
-            delivery < 0
-            or delivery >= n_nodes
-            or model._nodes[delivery].kind != NodeKind.JOB
-        ):
+            raise ValidationError(f"pickup_delivery references invalid pickup job node id {pickup}")
+        if delivery < 0 or delivery >= n_nodes or model._nodes[delivery].kind != NodeKind.JOB:
             raise ValidationError(
                 f"pickup_delivery references invalid delivery job node id {delivery}",
             )
@@ -59,9 +51,7 @@ def validate(model: Model) -> None:
             raise ValidationError("pickup and delivery jobs must differ")
         key = (pickup, delivery)
         if key in seen_pairs:
-            raise ValidationError(
-                f"duplicate pickup_delivery pair {pickup} -> {delivery}"
-            )
+            raise ValidationError(f"duplicate pickup_delivery pair {pickup} -> {delivery}")
         seen_pairs.add(key)
 
     if model._travel_edges:

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from vrp_model.core.errors import ValidationError
 from vrp_model.core.kinds import NodeKind
+from vrp_model.core.records import JobNodeRecord
 from vrp_model.core.storage import normalize_load, skills_to_frozen
 from vrp_model.core.time_window_flex import TimeWindowFlex
 
@@ -195,6 +196,9 @@ class Job:
             raise ValidationError("node_id does not refer to a job")
         self._node_id = node_id
 
+    def _job_row(self) -> JobNodeRecord:
+        return cast(JobNodeRecord, self._model._nodes[self._node_id])
+
     @property
     def node_id(self) -> int:
         return self._node_id
@@ -226,48 +230,48 @@ class Job:
 
     @property
     def demand(self) -> list[int]:
-        return self._model._nodes[self._node_id].demand
+        return self._job_row().demand
 
     @demand.setter
     def demand(self, value: int | list[int]) -> None:
-        self._model._nodes[self._node_id].demand = normalize_load(value)
+        self._job_row().demand = normalize_load(value)
 
     @property
     def service_time(self) -> int:
-        return self._model._nodes[self._node_id].service_time
+        return self._job_row().service_time
 
     @service_time.setter
     def service_time(self, value: int) -> None:
-        self._model._nodes[self._node_id].service_time = int(value)
+        self._job_row().service_time = int(value)
 
     @property
     def time_window(self) -> tuple[int, int] | None:
-        return self._model._nodes[self._node_id].time_window
+        return self._job_row().time_window
 
     @time_window.setter
     def time_window(self, value: tuple[int, int] | None) -> None:
-        self._model._nodes[self._node_id].time_window = value
+        self._job_row().time_window = value
 
     @property
     def time_window_flex(self) -> TimeWindowFlex | None:
-        return self._model._nodes[self._node_id].time_window_flex
+        return self._job_row().time_window_flex
 
     @time_window_flex.setter
     def time_window_flex(self, value: TimeWindowFlex | None) -> None:
-        self._model._nodes[self._node_id].time_window_flex = value
+        self._job_row().time_window_flex = value
 
     @property
     def skills_required(self) -> frozenset[int]:
-        return self._model._nodes[self._node_id].skills_required
+        return self._job_row().skills_required
 
     @skills_required.setter
     def skills_required(self, value: set[int] | frozenset[int]) -> None:
-        self._model._nodes[self._node_id].skills_required = skills_to_frozen(value)
+        self._job_row().skills_required = skills_to_frozen(value)
 
     @property
     def prize(self) -> float | None:
-        return self._model._nodes[self._node_id].prize
+        return self._job_row().prize
 
     @prize.setter
     def prize(self, value: float | None) -> None:
-        self._model._nodes[self._node_id].prize = value
+        self._job_row().prize = value

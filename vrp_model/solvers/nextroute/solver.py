@@ -147,7 +147,7 @@ class NextrouteSolver(Solver):
             anchor = anchor_raw if anchor_raw.tzinfo else anchor_raw.replace(tzinfo=UTC)
         else:
             anchor = datetime.fromisoformat(str(anchor_raw).replace("Z", "+00:00"))
-        speed = float(opts.get("speed_mps", DEFAULT_SPEED_MPS))
+        speed = float(cast(float | int, opts.get("speed_mps", DEFAULT_SPEED_MPS)))
 
         dims = _max_capacity_dims(model)
         n = len(job_ids)
@@ -194,7 +194,7 @@ class NextrouteSolver(Solver):
                 else:
                     q[key] = int(qv)
             lon, lat = _lon_lat_for_node(model, jid)
-            stop: dict[str, Any] = {
+            stop_entry: dict[str, Any] = {
                 "id": f"{_STOP_PREFIX}{jid}",
                 "location": {"lon": lon, "lat": lat},
                 "duration": int(row.service_time),
@@ -202,13 +202,13 @@ class NextrouteSolver(Solver):
             }
             tw = row.time_window
             if tw is not None:
-                stop["start_time_window"] = _tw_to_iso_pair(anchor, tw)
+                stop_entry["start_time_window"] = _tw_to_iso_pair(anchor, tw)
             skills = [str(s) for s in sorted(row.skills_required)]
             if skills:
-                stop["compatibility_attributes"] = skills
+                stop_entry["compatibility_attributes"] = skills
             if jid in precedes_map:
-                stop["precedes"] = precedes_map[jid]
-            stops_payload.append(stop)
+                stop_entry["precedes"] = precedes_map[jid]
+            stops_payload.append(stop_entry)
 
         vehicles_payload: list[dict[str, Any]] = []
         for vi, veh in enumerate(model._vehicles):
@@ -321,7 +321,7 @@ class NextrouteSolver(Solver):
             obj_val = float(sol0.objective.value)
         feasible = bool(model.is_solution_feasible())
         mapped = SolveStatus.FEASIBLE if feasible else SolveStatus.INFEASIBLE
-        tl = float(opts[TIME_LIMIT])
+        tl = float(cast(float | int, opts[TIME_LIMIT]))
         if elapsed + 1e-6 >= tl and tl > 0:
             stop = SolverStopReason.TIME_LIMIT
         elif feasible:

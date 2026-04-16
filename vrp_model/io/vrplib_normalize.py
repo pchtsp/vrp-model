@@ -48,9 +48,7 @@ def normalize_vrplib_read_dict(data: VRPLibReadDict) -> NormalizedInstance:
     if depot_raw is None:
         depot_idxs_list = [0]
     else:
-        depot_idxs_list = [
-            int(x) for x in np.asarray(depot_raw, dtype=int).reshape(-1).tolist()
-        ]
+        depot_idxs_list = [int(x) for x in np.asarray(depot_raw, dtype=int).reshape(-1).tolist()]
     depot_idxs = tuple(sorted(set(depot_idxs_list)))
 
     coords = _coordinates_list(node_coord, n_locs)
@@ -111,9 +109,7 @@ def _optional_int_list(
     return [int(x) for x in arr.tolist()]
 
 
-def _coordinates_list(
-    node_coord: object | None, n_locs: int
-) -> list[tuple[float, float] | None]:
+def _coordinates_list(node_coord: object | None, n_locs: int) -> list[tuple[float, float] | None]:
     if node_coord is None:
         return [None] * n_locs
     coords = np.asarray(node_coord, dtype=float)
@@ -130,9 +126,7 @@ def _service_times_list(data: Mapping[str, Any], n_locs: int) -> list[int]:
     return [int(st[i]) for i in range(n_locs)]
 
 
-def _time_windows_list(
-    data: Mapping[str, Any], n_locs: int
-) -> list[tuple[int, int] | None]:
+def _time_windows_list(data: Mapping[str, Any], n_locs: int) -> list[tuple[int, int] | None]:
     if VRPLibReadKey.TIME_WINDOW not in data:
         return [None] * n_locs
     tw_arr = np.asarray(data[str(VRPLibReadKey.TIME_WINDOW)])
@@ -227,9 +221,7 @@ def _square_matrix_int_rounded(value: object, n: int) -> list[list[int]]:
     return [[int(np.rint(float(mat[i, j]))) for j in range(n)] for i in range(n)]
 
 
-def _optional_duration_matrix_int(
-    data: Mapping[str, Any], n: int
-) -> list[list[int]] | None:
+def _optional_duration_matrix_int(data: Mapping[str, Any], n: int) -> list[list[int]] | None:
     for cand in DURATION_MATRIX_READ_KEYS:
         if cand not in data:
             continue

@@ -193,20 +193,23 @@ class VroomSolver(Solver):
                 cap = [0] * dims
             vtw = veh.time_window
             tw = None if vtw is None else VroomTimeWindow(int(vtw[0]), int(vtw[1]))
-            v_kwargs: dict[str, object] = {
-                "id": vi,
-                "start": sd,
-                "end": ed,
-                "capacity": vroom.Amount(cap),
-                "skills": set(veh.skills),
-                "time_window": tw,
-                "costs": vroom.VehicleCosts(fixed=int(veh.fixed_use_cost)),
-            }
-            if veh.max_route_time is not None:
-                v_kwargs["max_travel_time"] = int(veh.max_route_time)
-            if veh.max_route_distance is not None:
-                v_kwargs["max_distance"] = int(veh.max_route_distance)
-            inp.add_vehicle(vroom.Vehicle(**v_kwargs))
+            max_travel_time = int(veh.max_route_time) if veh.max_route_time is not None else None
+            max_distance = (
+                int(veh.max_route_distance) if veh.max_route_distance is not None else None
+            )
+            inp.add_vehicle(
+                vroom.Vehicle(
+                    id=vi,
+                    start=sd,
+                    end=ed,
+                    capacity=vroom.Amount(cap),
+                    skills=set(veh.skills),
+                    time_window=tw,
+                    costs=vroom.VehicleCosts(fixed=int(veh.fixed_use_cost)),
+                    max_travel_time=max_travel_time,
+                    max_distance=max_distance,
+                ),
+            )
 
         opts = self._options
         exploration = int(cast(int, opts.get("exploration_level", 5)))
@@ -273,13 +276,10 @@ class VroomSolver(Solver):
         sol_dict: dict[str, Any] = sol.to_dict()
         summary = sol_dict.get("summary") or {}
         code = int(sol_dict.get("code", 0))
-        unassigned = int(summary.get("unassigned", 0))
         cost_raw = summary.get("cost")
         cost = float(cost_raw) if cost_raw is not None else None
         mandatory_unassigned = len(model.mandatory_unassigned_jobs())
-        feasible = (
-            code == 0 and mandatory_unassigned == 0 and bool(model.is_solution_feasible())
-        )
+        feasible = code == 0 and mandatory_unassigned == 0 and bool(model.is_solution_feasible())
         mapped = SolveStatus.FEASIBLE if feasible else SolveStatus.INFEASIBLE
         if elapsed + 1e-6 >= tl and tl > 0:
             stop = SolverStopReason.TIME_LIMIT
