@@ -13,13 +13,7 @@ from vrp_model.core.solution import Route, Solution
 from vrp_model.core.travel_edges import TRAVEL_COST_INF, TravelEdgesMap
 from vrp_model.core.views import Depot, Job, Vehicle
 from vrp_model.solvers.base import Solver
-from vrp_model.solvers.options import (
-    LOG_PATH,
-    MSG,
-    SEED,
-    TIME_LIMIT,
-    merge_solver_options,
-)
+from vrp_model.solvers.options import LOG_PATH, MSG, SEED, TIME_LIMIT
 from vrp_model.solvers.pyvrp.bindings import (
     CAP_PAD,
     TW_LATE_DEFAULT,
@@ -29,6 +23,7 @@ from vrp_model.solvers.pyvrp.bindings import (
     PyVRPModelLike,
     PyVRPResultLike,
 )
+from vrp_model.solvers.pyvrp.options import merge_pyvrp_solver_options
 from vrp_model.solvers.status import SolutionStatus, SolverStopReason
 from vrp_model.utils.distance import euclidean_int
 
@@ -128,19 +123,21 @@ class PyVRPSolver(Solver):
             Feature.MULTI_DEPOT,
             Feature.HETEROGENEOUS_FLEET,
             Feature.PRIZE_COLLECTING,
+            Feature.VEHICLE_FIXED_COST,
+            Feature.MAX_ROUTE_DISTANCE,
+            Feature.MAX_ROUTE_TIME,
+            Feature.ROUTE_OVERTIME,
         },
     )
 
     def __init__(self, options: dict | None = None) -> None:
-        self._options = merge_solver_options(options)
+        self._options = merge_pyvrp_solver_options(options)
 
     def build_solver_model(self, model: Model) -> PyVRPModelLike:
         """Build PyVRP model from canonical ``model``. Read-only on ``self``."""
         pmc = PyVRPModel
         if pmc is None:
-            raise SolverNotInstalledError(
-                'install the "pyvrp" extra to use PyVRPSolver'
-            )
+            raise SolverNotInstalledError('install the "pyvrp" extra to use PyVRPSolver')
 
         dims = _max_dims(model)
         pickup_ids = {pd.pickup_job_node_id for pd in model._pickup_deliveries}
@@ -211,9 +208,7 @@ class PyVRPSolver(Solver):
             )
             solver_node_for_id[i] = c_obj
 
-        nodes_for_edges: list[object] = [
-            sn for sn in solver_node_for_id if sn is not None
-        ]
+        nodes_for_edges: list[object] = [sn for sn in solver_node_for_id if sn is not None]
         if len(nodes_for_edges) != n_nodes:
             msg = "internal error: missing PyVRP node for some model node"
             raise RuntimeError(msg)
@@ -241,24 +236,33 @@ class PyVRPSolver(Solver):
             tw_early = int(vtw[0]) if vtw is not None else 0
             tw_late = int(vtw[1]) if vtw is not None else TW_LATE_DEFAULT
             vname = _export_name(vehicle.label, vi, "vehicle")
-            pm.add_vehicle_type(
-                num_available=1,
-                capacity=cap,
-                start_depot=sd_obj,
-                end_depot=ed_obj,
-                tw_early=tw_early,
-                tw_late=tw_late,
-                name=vname,
-            )
+            vt_kwargs: dict[str, object] = {
+                "num_available": 1,
+                "capacity": cap,
+                "start_depot": sd_obj,
+                "end_depot": ed_obj,
+                "fixed_cost": int(vehicle.fixed_use_cost),
+                "tw_early": tw_early,
+                "tw_late": tw_late,
+                "name": vname,
+            }
+            mrd = vehicle.max_route_distance
+            if mrd is not None:
+                vt_kwargs["max_distance"] = int(mrd)
+            mrt = vehicle.max_route_time
+            if mrt is not None:
+                vt_kwargs["shift_duration"] = int(mrt)
+                extra = vehicle.max_route_overtime
+                vt_kwargs["max_overtime"] = int(extra) if extra is not None else 0
+                vt_kwargs["unit_overtime_cost"] = int(vehicle.route_overtime_unit_cost)
+            pm.add_vehicle_type(**vt_kwargs)
 
         return pm
 
     def call_solver(self, pm: PyVRPModelLike) -> PyVRPResultLike:
         """Run PyVRP search using ``self._options`` (set in ``__init__``)."""
         if PyVRPMaxRuntime is None:
-            raise SolverNotInstalledError(
-                'install the "pyvrp" extra to use PyVRPSolver'
-            )
+            raise SolverNotInstalledError('install the "pyvrp" extra to use PyVRPSolver')
 
         opts = self._options
         tl = opts[TIME_LIMIT]
@@ -345,7 +349,7 @@ class PyVRPSolver(Solver):
                 wall_time_seconds=0.0,
                 optimality_gap=None,
                 solver_reported_cost=0.0,
-                stop_reason=SolverStopReason.FEASIBLE,
+                stop_reason=SolverStopReason.COMPLETED,
                 solution_found=True,
                 iterations=0,
                 error_message=None,
@@ -353,16 +357,12 @@ class PyVRPSolver(Solver):
             )
 
         if PyVRPModel is None or PyVRPMaxRuntime is None:
-            raise SolverNotInstalledError(
-                'install the "pyvrp" extra to use PyVRPSolver'
-            )
+            raise SolverNotInstalledError('install the "pyvrp" extra to use PyVRPSolver')
 
         pm = self.build_solver_model(model)
         result = self.call_solver(pm)
         best = result.best
-        raw_status = (
-            SolveStatus.FEASIBLE if best.is_feasible() else SolveStatus.INFEASIBLE
-        )
+        raw_status = SolveStatus.FEASIBLE if best.is_feasible() else SolveStatus.INFEASIBLE
         model._solution = self.find_solution_values(model, result)
 
         tl = float(cast(float | int, self._options[TIME_LIMIT]))
@@ -370,7 +370,7 @@ class PyVRPSolver(Solver):
         if elapsed + 1e-6 >= tl:
             stop_reason = SolverStopReason.TIME_LIMIT
         elif best.is_feasible():
-            stop_reason = SolverStopReason.FEASIBLE
+            stop_reason = SolverStopReason.COMPLETED
         else:
             stop_reason = SolverStopReason.INFEASIBLE
 

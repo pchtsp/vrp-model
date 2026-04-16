@@ -13,10 +13,16 @@ class TestModelSolutionAPIs(unittest.TestCase):
         d = m.add_depot()
         m.add_vehicle([], d)
         m.add_job(1, location=(0.0, 0.0))
-        for name in ("solution_cost", "is_solution_feasible", "unassigned_jobs"):
-            with self.subTest(name):
+        for call in (
+            lambda: m.solution_cost(),
+            lambda: m.solution_travel_distance(),
+            lambda: m.is_solution_feasible(),
+            lambda: m.unassigned_jobs(),
+            lambda: m.mandatory_unassigned_jobs(),
+        ):
+            with self.subTest(call=call):
                 with self.assertRaises(SolutionUnavailableError):
-                    getattr(m, name)()
+                    call()
 
     def test_unassigned_jobs_empty_when_all_on_route(self) -> None:
         m = Model()
@@ -39,7 +45,17 @@ class TestModelSolutionAPIs(unittest.TestCase):
         )
         m.validate()
         m._solution = Solution(routes=[Route(vehicle=v, start_depot=d, end_depot=d, jobs=[j])])
+        self.assertEqual(m.solution_travel_distance(), 12.0)
         self.assertEqual(m.solution_cost(), 12.0)
+
+    def test_solution_cost_includes_fixed_vehicle_use(self) -> None:
+        m = Model()
+        d = m.add_depot(location=(0.0, 0.0))
+        v = m.add_vehicle([10], d, fixed_use_cost=100)
+        j = m.add_job(0, location=(1.0, 0.0))
+        m._solution = Solution(routes=[Route(vehicle=v, start_depot=d, end_depot=d, jobs=[j])])
+        self.assertEqual(m.solution_travel_distance(), 2.0)
+        self.assertEqual(m.solution_cost(), 102.0)
 
     def test_is_solution_feasible_false_on_capacity(self) -> None:
         m = Model()

@@ -16,7 +16,7 @@ class TestSolutionStatus(unittest.TestCase):
             wall_time_seconds=1.0,
             optimality_gap=None,
             solver_reported_cost=0.0,
-            stop_reason=SolverStopReason.FEASIBLE,
+            stop_reason=SolverStopReason.COMPLETED,
             solution_found=True,
             iterations=0,
             error_message=None,

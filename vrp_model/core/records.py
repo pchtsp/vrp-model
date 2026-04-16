@@ -24,7 +24,7 @@ class JobNodeRecord(DepotNodeRecord):
     demand: list[int]
     service_time: int
     time_window: tuple[int, int] | None
-    skills_required: frozenset[str]
+    skills_required: frozenset[int]
     prize: float | None = None
     time_window_flex: TimeWindowFlex | None = None
 
@@ -37,12 +37,14 @@ class VehicleRecord:
     capacity: list[int]
     start_depot_node_id: int
     end_depot_node_id: int | None
-    skills: frozenset[str]
+    skills: frozenset[int]
     time_window: tuple[int, int] | None = None
     time_window_flex: TimeWindowFlex | None = None
     fixed_use_cost: int = 0
     max_route_distance: int | None = None
     max_route_time: int | None = None
+    max_route_overtime: int | None = None
+    route_overtime_unit_cost: int = 0
     max_slack_time: int | None = None
 
 

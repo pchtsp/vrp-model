@@ -9,14 +9,17 @@ from vrp_model.core.model import SolveStatus
 
 
 class SolverStopReason(Enum):
-    """Why the solver stopped (best-effort mapping from backend semantics)."""
+    """Why the solver stopped (best-effort mapping from backend semantics).
+
+    Feasibility and solution presence belong in :attr:`SolutionStatus.mapped_status` and
+    :attr:`SolutionStatus.solution_found`, not in this enum.
+    """
 
     TIME_LIMIT = auto()
     MAX_ITERATIONS = auto()
     OPTIMAL = auto()
-    FEASIBLE = auto()
+    COMPLETED = auto()
     INFEASIBLE = auto()
-    NO_SOLUTION = auto()
     ERROR = auto()
     UNKNOWN = auto()
 

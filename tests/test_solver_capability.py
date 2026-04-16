@@ -19,8 +19,8 @@ class TestSolverCapability(unittest.TestCase):
     def test_pyvrp_rejects_skills(self) -> None:
         m = Model()
         d = m.add_depot(location=(0.0, 0.0))
-        m.add_vehicle([10], d, skills={"x"})
-        m.add_job(1, location=(1.0, 0.0), skills_required={"x"})
+        m.add_vehicle([10], d, skills={1})
+        m.add_job(1, location=(1.0, 0.0), skills_required={1})
 
         solver = PyVRPSolver()
         with self.assertRaises(SolverCapabilityError):

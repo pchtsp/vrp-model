@@ -153,8 +153,24 @@ class TestFeasibility(unittest.TestCase):
     def test_skills_no_covering_vehicle(self) -> None:
         m = Model()
         d = m.add_depot()
-        m.add_vehicle([], d, skills={"x"})
-        m.add_job(0, skills_required={"y"}, location=(0.0, 0.0))
+        m.add_vehicle([], d, skills={1})
+        m.add_job(0, skills_required={2}, location=(0.0, 0.0))
+        with self.assertRaises(ValidationError):
+            m.validate()
+
+    def test_overtime_requires_nominal_route_time(self) -> None:
+        m = Model()
+        d = m.add_depot()
+        m.add_vehicle([], d, max_route_overtime=5)
+        m.add_job(0, location=(0.0, 0.0))
+        with self.assertRaises(ValidationError):
+            m.validate()
+
+    def test_overtime_unit_cost_requires_allowance(self) -> None:
+        m = Model()
+        d = m.add_depot()
+        m.add_vehicle([], d, max_route_time=100, route_overtime_unit_cost=1)
+        m.add_job(0, location=(0.0, 0.0))
         with self.assertRaises(ValidationError):
             m.validate()
 

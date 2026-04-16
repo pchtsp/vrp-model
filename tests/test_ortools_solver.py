@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 
+from tests.toy_instances import build_tiny_line_two_jobs
 from vrp_model import Model, TimeWindowFlex, TravelEdgeAttrs, TravelEdgesMap
 from vrp_model.core.errors import SolverNotInstalledError
 from vrp_model.solvers.ortools import ORToolsSolver
@@ -19,11 +20,7 @@ else:
 @unittest.skipIf(not _ORTOOLS_INSTALLED, "ortools extra not installed")
 class TestORToolsSolver(unittest.TestCase):
     def test_tiny_instance_feasible(self) -> None:
-        m = Model()
-        d = m.add_depot(location=(0.0, 0.0))
-        m.add_vehicle([10], d)
-        m.add_job(3, location=(1.0, 0.0), label="j0")
-        m.add_job(4, location=(2.0, 0.0), label="j1")
+        m = build_tiny_line_two_jobs()
 
         solver = ORToolsSolver({"time_limit": 5.0})
         result = solver.solve(m)
@@ -74,10 +71,10 @@ class TestORToolsSolver(unittest.TestCase):
     def test_skills_routes_compatible_vehicle(self) -> None:
         m = Model()
         d = m.add_depot(location=(0.0, 0.0))
-        m.add_vehicle([10], d, skills={"A"})
-        m.add_vehicle([10], d, skills={"B"})
-        m.add_job(1, location=(1.0, 0.0), skills_required={"A"})
-        m.add_job(1, location=(2.0, 0.0), skills_required={"B"})
+        m.add_vehicle([10], d, skills={1})
+        m.add_vehicle([10], d, skills={2})
+        m.add_job(1, location=(1.0, 0.0), skills_required={1})
+        m.add_job(1, location=(2.0, 0.0), skills_required={2})
         m.validate()
         ORToolsSolver({"time_limit": 20.0}).solve(m)
         self.assertTrue(m.is_solution_feasible())
@@ -106,6 +103,25 @@ class TestORToolsSolver(unittest.TestCase):
         m.validate()
         r = ORToolsSolver({"time_limit": 10.0}).solve(m)
         self.assertIn(r.mapped_status.name, ("FEASIBLE", "OPTIMAL"))
+
+    def test_route_time_overtime_makes_tight_span_feasible(self) -> None:
+        """Nominal span too small; extra overtime window allows a feasible route."""
+        m = Model()
+        d = m.add_depot(location=(0.0, 0.0))
+        m.add_vehicle(
+            [10],
+            d,
+            time_window=(0, 10_000),
+            max_route_time=3,
+            max_route_overtime=10,
+            route_overtime_unit_cost=0,
+        )
+        m.add_job(1, location=(1.0, 0.0), label="a", time_window=(0, 10_000))
+        m.add_job(1, location=(2.0, 0.0), label="b", time_window=(0, 10_000))
+        m.validate()
+        r = ORToolsSolver({"time_limit": 15.0}).solve(m)
+        self.assertIn(r.mapped_status.name, ("FEASIBLE", "OPTIMAL"))
+        self.assertTrue(m.is_solution_feasible())
 
     def test_flexible_time_window_soft_latest(self) -> None:
         m = Model()

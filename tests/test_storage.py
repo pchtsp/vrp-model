@@ -19,7 +19,7 @@ class TestNormalizeLoad(unittest.TestCase):
 
 class TestSkills(unittest.TestCase):
     def test_frozenset_from_set(self) -> None:
-        self.assertEqual(skills_to_frozen({"a", "b"}), frozenset({"a", "b"}))
+        self.assertEqual(skills_to_frozen({1, 2}), frozenset({1, 2}))
 
 
 if __name__ == "__main__":

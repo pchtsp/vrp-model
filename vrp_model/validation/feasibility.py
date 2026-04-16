@@ -20,6 +20,7 @@ def validate(model: Model) -> None:
     _time_window_flex(model)
     _vehicle_routing_limits(model)
     _capacity(model)
+    _skill_ids_non_negative(model)
     _skills(model)
     _pickup_delivery_pair_skills(model)
 
@@ -121,6 +122,21 @@ def _vehicle_routing_limits(model: Model) -> None:
             raise ValidationError(f"{tag} max_route_distance must be positive when set")
         if v.max_route_time is not None and v.max_route_time <= 0:
             raise ValidationError(f"{tag} max_route_time must be positive when set")
+        mot = v.max_route_overtime
+        if mot is not None and mot < 0:
+            raise ValidationError(f"{tag} max_route_overtime must be non-negative when set")
+        if mot is not None and mot > 0 and v.max_route_time is None:
+            raise ValidationError(
+                f"{tag} max_route_time must be set when max_route_overtime is positive",
+            )
+        uoc = v.route_overtime_unit_cost
+        if uoc < 0:
+            raise ValidationError(f"{tag} route_overtime_unit_cost must be non-negative")
+        if uoc > 0 and (mot is None or mot <= 0):
+            raise ValidationError(
+                f"{tag} max_route_overtime must be positive when route_overtime_unit_cost is "
+                "positive",
+            )
         if v.max_slack_time is not None and v.max_slack_time < 0:
             raise ValidationError(f"{tag} max_slack_time must be non-negative when set")
 
@@ -177,6 +193,22 @@ def _capacity(model: Model) -> None:
                 jt = job_tag(model, node_id)
                 raise ValidationError(
                     f"job {jt} demand dim {i} exceeds max fleet capacity on that dimension",
+                )
+
+
+def _skill_ids_non_negative(model: Model) -> None:
+    """Skill ids must be non-negative on vehicles and jobs."""
+    for vi, v in enumerate(model._vehicles):
+        for s in v.skills:
+            if s < 0:
+                raise ValidationError(f"{vehicle_tag(model, vi)} has negative skill id {s}")
+    for node_id, row in enumerate(model._nodes):
+        if row.kind != NodeKind.JOB:
+            continue
+        for s in row.skills_required:
+            if s < 0:
+                raise ValidationError(
+                    f"job {job_tag(model, node_id)} has negative skill id {s}",
                 )
 
 

@@ -24,14 +24,14 @@ def write_vrplib_instance(path: str | Path, model: Model) -> None:
 def write_vrplib_solution(path: str | Path, model: Model) -> None:
     """Write a solution file using :func:`vrplib.write_solution`.
 
-    Requires ``model.solution`` and uses :meth:`~vrp_model.core.model.Model.solution_cost`
-    for the reported cost.
+    Requires ``model.solution`` and writes **travel distance** as ``Cost`` (VRPLIB-style
+    distance), not the full :meth:`~vrp_model.core.model.Model.solution_cost` objective.
     """
     sol = model.solution
     if sol is None:
         raise SolutionUnavailableError("no solution is attached to this model")
     routes = solution_to_vrplib_routes(sol)
-    extra = {"Cost": int(round(float(model.solution_cost())))}
+    extra = {"Cost": int(round(float(model.solution_travel_distance())))}
     vrplib.write_solution(str(path), routes, extra)
 
 

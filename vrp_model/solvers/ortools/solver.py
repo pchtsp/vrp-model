@@ -137,7 +137,7 @@ def _register_matrix_or_vehicle_transits(
             end_n = veh.start_depot_node_id
         vskills = veh.skills
 
-        def make_transit(end_depot: int, sk: frozenset[str]) -> object:
+        def make_transit(end_depot: int, sk: frozenset[int]) -> object:
             def transit_cb(from_index: int, to_index: int) -> int:
                 fn = manager.IndexToNode(from_index)
                 tn = manager.IndexToNode(to_index)
@@ -167,6 +167,10 @@ def _needs_time_dimension(model: Model) -> bool:
         if row.kind == NodeKind.JOB and cast(JobNodeRecord, row).time_window is not None:
             return True
     if any(v.max_route_time is not None for v in model._vehicles):
+        return True
+    if any(
+        (v.max_route_overtime or 0) > 0 or v.route_overtime_unit_cost != 0 for v in model._vehicles
+    ):
         return True
     if any(v.max_slack_time is not None for v in model._vehicles):
         return True
@@ -231,6 +235,7 @@ class ORToolsSolver(Solver):
             Feature.VEHICLE_FIXED_COST,
             Feature.MAX_ROUTE_DISTANCE,
             Feature.MAX_ROUTE_TIME,
+            Feature.ROUTE_OVERTIME,
             Feature.MAX_NODE_SLACK,
         },
     )
@@ -253,7 +258,7 @@ class ORToolsSolver(Solver):
                 wall_time_seconds=0.0,
                 optimality_gap=None,
                 solver_reported_cost=0.0,
-                stop_reason=SolverStopReason.FEASIBLE,
+                stop_reason=SolverStopReason.COMPLETED,
                 solution_found=True,
                 iterations=0,
                 error_message=None,
@@ -336,8 +341,21 @@ class ORToolsSolver(Solver):
             time_dim = routing.GetDimensionOrDie("Time")
             for vi, veh in enumerate(model._vehicles):
                 cap_t = veh.max_route_time
-                if cap_t is not None:
-                    time_dim.SetSpanUpperBoundForVehicle(int(cap_t), vi)
+                if cap_t is None:
+                    continue
+                extra = int(veh.max_route_overtime) if veh.max_route_overtime is not None else 0
+                hard_span = int(cap_t) + max(0, extra)
+                hard_span = min(hard_span, ORTOOLS_TRANSIT_CAP)
+                time_dim.SetSpanUpperBoundForVehicle(hard_span, vi)
+
+            for vi, veh in enumerate(model._vehicles):
+                cap_t = veh.max_route_time
+                if cap_t is None:
+                    continue
+                uc = int(veh.route_overtime_unit_cost)
+                if uc > 0:
+                    bc = pywrapcp.BoundCost(int(cap_t), uc)
+                    time_dim.SetSoftSpanUpperBoundForVehicle(bc, vi)
 
             for vi, veh in enumerate(model._vehicles):
                 tw = veh.time_window
@@ -479,9 +497,9 @@ class ORToolsSolver(Solver):
         if routing.status() == 1:  # ROUTING_SUCCESS (optimal)
             raw_status = SolveStatus.OPTIMAL
 
-        stop_reason = SolverStopReason.FEASIBLE
+        stop_reason = SolverStopReason.COMPLETED
         if raw_status == SolveStatus.OPTIMAL:
-            stop_reason = SolverStopReason.FEASIBLE
+            stop_reason = SolverStopReason.OPTIMAL
         if elapsed + 1e-6 >= tl:
             stop_reason = SolverStopReason.TIME_LIMIT
 

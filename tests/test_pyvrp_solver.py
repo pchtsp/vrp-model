@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 
+from tests.toy_instances import build_tiny_line_two_jobs
 from vrp_model import Model, TravelEdgeAttrs, TravelEdgesMap
 
 try:
@@ -17,11 +18,7 @@ except ModuleNotFoundError:
 @unittest.skipIf(PyVRPSolver is None, "pyvrp extra not installed")
 class TestPyVRPSolver(unittest.TestCase):
     def test_tiny_instance_feasible(self) -> None:
-        m = Model()
-        d = m.add_depot(location=(0.0, 0.0))
-        m.add_vehicle([10], d)
-        m.add_job(3, location=(1.0, 0.0), label="j0")
-        m.add_job(4, location=(2.0, 0.0), label="j1")
+        m = build_tiny_line_two_jobs()
 
         solver = PyVRPSolver({"time_limit": 2.0, "msg": False})
         result = solver.solve(m)
@@ -99,6 +96,45 @@ class TestPyVRPSolver(unittest.TestCase):
         self.assertEqual(result.mapped_status.name, "FEASIBLE")
         labels = {j.label for r in sol.routes for j in r.jobs}
         self.assertEqual(labels, {"mid", "last"})
+
+    def test_fixed_cost_route_limits_supported(self) -> None:
+        """PyVRP receives fixed cost, max distance, and max route time when set."""
+        m = Model()
+        d = m.add_depot(location=(0.0, 0.0))
+        m.add_vehicle(
+            [10],
+            d,
+            fixed_use_cost=100,
+            max_route_distance=10_000,
+            max_route_time=10_000,
+        )
+        m.add_job(1, location=(1.0, 0.0), label="j0")
+        m.validate()
+
+        solver = PyVRPSolver({"time_limit": 2.0, "msg": False})
+        result = solver.solve(m)
+        sol = m.solution
+        assert sol is not None
+        self.assertEqual(result.mapped_status.name, "FEASIBLE")
+        self.assertTrue(m.is_solution_feasible())
+
+    def test_route_time_overtime_pyvrp(self) -> None:
+        m = Model()
+        d = m.add_depot(location=(0.0, 0.0))
+        m.add_vehicle(
+            [10],
+            d,
+            max_route_time=3,
+            max_route_overtime=10,
+            route_overtime_unit_cost=0,
+        )
+        m.add_job(1, location=(1.0, 0.0), label="a")
+        m.add_job(1, location=(2.0, 0.0), label="b")
+        m.validate()
+        solver = PyVRPSolver({"time_limit": 3.0, "msg": False})
+        result = solver.solve(m)
+        self.assertEqual(result.mapped_status.name, "FEASIBLE")
+        self.assertTrue(m.is_solution_feasible())
 
 
 if __name__ == "__main__":

@@ -21,7 +21,7 @@ class TestDetectFeatures(unittest.TestCase):
 
     def test_skills_flag(self) -> None:
         m = self._base()
-        m.add_job(0, skills_required={"s"})
+        m.add_job(0, skills_required={1})
         self.assertIn(Feature.SKILLS, m.features)
 
     def test_prize_collecting(self) -> None:
@@ -52,6 +52,18 @@ class TestDetectFeatures(unittest.TestCase):
         self.assertIn(Feature.MAX_ROUTE_DISTANCE, feats)
         self.assertIn(Feature.MAX_ROUTE_TIME, feats)
         self.assertIn(Feature.MAX_NODE_SLACK, feats)
+
+    def test_route_overtime_feature(self) -> None:
+        m = self._base()
+        d = list(m.depots)[0]
+        m.add_vehicle(
+            [],
+            d,
+            max_route_time=100,
+            max_route_overtime=20,
+            route_overtime_unit_cost=2,
+        )
+        self.assertIn(Feature.ROUTE_OVERTIME, m.features)
 
 
 if __name__ == "__main__":
