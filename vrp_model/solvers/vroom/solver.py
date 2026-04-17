@@ -76,6 +76,32 @@ def _build_distance_matrix(model: Model) -> np.ndarray:
     return _uint32_matrix_for_pyvroom(mat)
 
 
+def _pyvroom_input_solve(
+    inp: Any,
+    exploration_level: int,
+    nb_threads: int,
+    timeout: timedelta | None,
+) -> Any:
+    """Run pyvroom ``Input`` optimization.
+
+    pyvroom 1.15.0's :meth:`vroom.Input.solve` validates ``timeout`` with
+    ``isinstance(..., (None, timedelta))``, which raises :exc:`TypeError` on
+    Python 3.12+. Replicate :meth:`~vroom.Input.solve` via :meth:`_solve`.
+    """
+    from vroom.solution.solution import Solution as PyvroomSolution
+
+    sol = PyvroomSolution(
+        inp._solve(
+            exploration_level=int(exploration_level),
+            nb_threads=int(nb_threads),
+            timeout=timeout,
+        ),
+    )
+    sol._geometry = inp._geometry
+    sol._distances = inp._distances
+    return sol
+
+
 class VroomSolver(Solver):
     name = "vroom"
     supported_features = frozenset(
@@ -207,7 +233,12 @@ class VroomSolver(Solver):
         timeout = timedelta(seconds=tl) if tl > 0 else None
 
         try:
-            sol = inp.solve(exploration, nb_threads=nb_threads, timeout=timeout)
+            sol = _pyvroom_input_solve(
+                inp,
+                exploration_level=exploration,
+                nb_threads=nb_threads,
+                timeout=timeout,
+            )
         except KeyboardInterrupt:
             raise
         except Exception as exc:  # pragma: no cover - backend-specific
