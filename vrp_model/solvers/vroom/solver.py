@@ -41,28 +41,39 @@ def _clamp_mat(value: int) -> int:
     return min(int(value), VROOM_UINT32_MAX)
 
 
+def _uint32_matrix_for_pyvroom(mat: np.ndarray) -> np.ndarray:
+    """Return a C-contiguous, aligned ``uint32`` matrix for pyvroom's ``_vroom.Matrix``.
+
+    On Linux/macOS, ``numpy.asarray(..., dtype=uint32)`` inside pyvroom can raise
+    ``RuntimeError: Incompatible buffer format!`` if the buffer is not strictly
+    compatible with NumPy 2 / the extension expectations.
+    """
+    a = np.ascontiguousarray(mat, dtype=np.uint32)
+    return np.require(a, dtype=np.uint32, requirements=["C"])
+
+
 def _build_duration_matrix(model: Model) -> np.ndarray:
     n = len(model._nodes)
-    mat = np.zeros((n, n), dtype=np.uint32)
+    mat = np.zeros((n, n), dtype=np.uint32, order="C")
     for i in range(n):
         for j in range(n):
             if i == j:
                 continue
             raw = model._directed_travel_duration(i, j)
             mat[i, j] = _clamp_mat(raw)
-    return np.ascontiguousarray(mat)
+    return _uint32_matrix_for_pyvroom(mat)
 
 
 def _build_distance_matrix(model: Model) -> np.ndarray:
     n = len(model._nodes)
-    mat = np.zeros((n, n), dtype=np.uint32)
+    mat = np.zeros((n, n), dtype=np.uint32, order="C")
     for i in range(n):
         for j in range(n):
             if i == j:
                 continue
             raw = model._directed_travel_distance(i, j)
             mat[i, j] = _clamp_mat(raw)
-    return np.ascontiguousarray(mat)
+    return _uint32_matrix_for_pyvroom(mat)
 
 
 class VroomSolver(Solver):
@@ -215,9 +226,12 @@ class VroomSolver(Solver):
 
         elapsed = time.perf_counter() - t0
         routes_df = sol.routes
+        # Coerce vehicle ids: pyvroom's DataFrame may use uint32/float/string per OS;
+        # strict ``== vi`` can yield empty slices on Linux/macOS so routes look empty.
+        vehicle_ids = pandas.to_numeric(routes_df["vehicle_id"], errors="coerce")
         routes_out: list[Route] = []
         for vi in range(len(model._vehicles)):
-            sub = routes_df[routes_df["vehicle_id"] == vi]
+            sub = routes_df.loc[vehicle_ids == vi].reset_index(drop=True)
             if sub.empty:
                 veh = model._vehicles[vi]
                 sd = veh.start_depot_node_id
@@ -231,9 +245,10 @@ class VroomSolver(Solver):
                     ),
                 )
                 continue
-            start_unified = int(sub.loc[sub["type"] == "start", "location_index"].iloc[0])
-            end_unified = int(sub.loc[sub["type"] == "end", "location_index"].iloc[0])
-            steps = sub[sub["type"].isin(["job", "pickup", "delivery"])]
+            step_kind = sub["type"].astype(str)
+            start_unified = int(sub.loc[step_kind == "start", "location_index"].iloc[0])
+            end_unified = int(sub.loc[step_kind == "end", "location_index"].iloc[0])
+            steps = sub.loc[step_kind.isin(["job", "pickup", "delivery"])]
             job_seq: list[Job] = []
             for raw_id in steps["id"]:
                 if raw_id is None or pandas.isna(raw_id):

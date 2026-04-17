@@ -10,7 +10,11 @@ def vroom_matrix_ok() -> bool:
         return False
     try:
         inp = vroom.Input()
-        m = np.ascontiguousarray([[0, 1], [1, 0]], dtype=np.uint32)
+        m = np.require(
+            np.ascontiguousarray([[0, 1], [1, 0]], dtype=np.uint32),
+            dtype=np.uint32,
+            requirements=["C"],
+        )
         inp.set_durations_matrix("car", m)
     except RuntimeError:
         return False
