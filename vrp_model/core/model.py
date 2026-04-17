@@ -428,9 +428,7 @@ class Model:
     def _job_visits_are_unique(self, visited: Sequence[int]) -> bool:
         return len(set(visited)) == len(visited)
 
-    def _mandatory_jobs_each_visited_once(
-        self, visit_by_node: dict[int, int]
-    ) -> bool:
+    def _mandatory_jobs_each_visited_once(self, visit_by_node: dict[int, int]) -> bool:
         for node_id, row in enumerate(self._nodes):
             if row.kind != NodeKind.JOB:
                 continue
