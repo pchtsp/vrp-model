@@ -8,18 +8,25 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
           version: "latest"
+          enable-cache: true
       - name: Sync (all solver extras for integration tests)
         run: >-
-          uv sync --extra pyvrp --extra ortools --extra vroom --extra nextroute
-          --group dev
+          uv sync --all-extras --group dev --python ${{ matrix.python-version }}
       - name: Ruff
-        run: uv run ruff check vrp_model tests && uv run ruff format vrp_model tests --check
+        run: |
+          uv run ruff check vrp_model tests
+          uv run ruff format vrp_model tests --check
       - name: Ty
         run: uv run ty check vrp_model
       - name: Unit tests
