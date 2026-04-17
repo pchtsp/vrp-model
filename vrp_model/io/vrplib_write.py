@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import cast
 
 import numpy as np
 import vrplib
@@ -12,7 +11,6 @@ import vrplib
 from vrp_model.core.errors import SolutionUnavailableError
 from vrp_model.core.kinds import NodeKind
 from vrp_model.core.model import Model
-from vrp_model.core.records import JobNodeRecord
 from vrp_model.core.solution import Solution
 from vrp_model.core.travel_edges import TRAVEL_COST_INF
 from vrp_model.io.vrplib_keys import VRPLibReadKey, write_section_key, write_spec_key
@@ -68,7 +66,7 @@ def model_to_vrplib_dict(model: Model) -> dict[str, str | int | float | np.ndarr
     for i in range(n):
         row = model._nodes[i]
         if row.kind == NodeKind.JOB:
-            dem = cast(JobNodeRecord, row).demand
+            dem = row.as_job().demand
             demands.append(int(dem[0]) if dem else 0)
         else:
             demands.append(0)
@@ -112,7 +110,7 @@ def model_to_vrplib_dict(model: Model) -> dict[str, str | int | float | np.ndarr
     for i in range(n):
         row = model._nodes[i]
         if row.kind == NodeKind.JOB:
-            job = cast(JobNodeRecord, row)
+            job = row.as_job()
             tw = job.time_window
             st = job.service_time
         else:

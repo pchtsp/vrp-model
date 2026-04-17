@@ -6,6 +6,7 @@ Optional vs mandatory jobs: ``prize is None`` ⇒ mandatory; ``prize`` set ⇒ o
 
 from __future__ import annotations
 
+import unittest
 from collections.abc import Callable
 from dataclasses import dataclass
 from itertools import permutations
@@ -27,6 +28,7 @@ class ToyCase:
     cost_assertion: Literal["exact", "bounded", "none"]
     cost_tolerance: float = 0.0
     skip_for_solvers: frozenset[str] = frozenset()
+    structural_check: Callable[[Model, unittest.TestCase], None] | None = None
 
 
 def build_tiny_line_two_jobs() -> Model:
@@ -140,6 +142,41 @@ def build_heterogeneous_capacities() -> Model:
     return m
 
 
+def _structural_vehicle_fixed_cost(m: Model, tc: unittest.TestCase) -> None:
+    sol = m.solution
+    assert sol is not None
+    for r in sol.routes:
+        if r.jobs:
+            tc.assertEqual(r.vehicle.label, "cheap_fixed")
+
+
+def _structural_skills(m: Model, tc: unittest.TestCase) -> None:
+    sol = m.solution
+    assert sol is not None
+    for r in sol.routes:
+        for j in r.jobs:
+            if j.label == "needs_1":
+                tc.assertTrue(j.skills_required <= frozenset(r.vehicle.skills))
+
+
+def _structural_multi_depot(m: Model, tc: unittest.TestCase) -> None:
+    sol = m.solution
+    assert sol is not None
+    for r in sol.routes:
+        if not r.jobs:
+            continue
+        tc.assertEqual(r.end_depot.node_id, r.vehicle.end_depot.node_id)
+
+
+def _structural_heterogeneous_fleet(m: Model, tc: unittest.TestCase) -> None:
+    sol = m.solution
+    assert sol is not None
+    for r in sol.routes:
+        for j in r.jobs:
+            if j.label == "heavy":
+                tc.assertGreaterEqual(r.vehicle.capacity[0], 5)
+
+
 TOY_CASES: list[ToyCase] = [
     ToyCase(
         name="tiny_line_two_jobs",
@@ -182,6 +219,7 @@ TOY_CASES: list[ToyCase] = [
         documented_optimal_travel=2,
         documented_optimal_objective=2.0,
         cost_assertion="exact",
+        structural_check=_structural_vehicle_fixed_cost,
     ),
     ToyCase(
         name="skills",
@@ -190,6 +228,7 @@ TOY_CASES: list[ToyCase] = [
         documented_optimal_travel=None,
         documented_optimal_objective=None,
         cost_assertion="none",
+        structural_check=_structural_skills,
     ),
     ToyCase(
         name="multi_depot",
@@ -198,6 +237,7 @@ TOY_CASES: list[ToyCase] = [
         documented_optimal_travel=None,
         documented_optimal_objective=None,
         cost_assertion="none",
+        structural_check=_structural_multi_depot,
     ),
     ToyCase(
         name="heterogeneous_fleet",
@@ -206,6 +246,7 @@ TOY_CASES: list[ToyCase] = [
         documented_optimal_travel=None,
         documented_optimal_objective=None,
         cost_assertion="none",
+        structural_check=_structural_heterogeneous_fleet,
     ),
 ]
 

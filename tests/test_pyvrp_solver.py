@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from tests.toy_instances import build_tiny_line_two_jobs
+from tests.tiny_line_solver import run_tiny_line_two_jobs
 from vrp_model import Model, TravelEdgeAttrs, TravelEdgesMap
 
 try:
@@ -18,21 +18,12 @@ except ModuleNotFoundError:
 @unittest.skipIf(PyVRPSolver is None, "pyvrp extra not installed")
 class TestPyVRPSolver(unittest.TestCase):
     def test_tiny_instance_feasible(self) -> None:
-        m = build_tiny_line_two_jobs()
-
-        solver = PyVRPSolver({"time_limit": 2.0, "msg": False})
-        result = solver.solve(m)
-        sol = m.solution
-        self.assertIsNotNone(sol)
-        assert sol is not None
-        self.assertTrue(m.is_solution_feasible())
+        result, _m = run_tiny_line_two_jobs(PyVRPSolver({"time_limit": 2.0, "msg": False}))
         self.assertEqual(result.mapped_status.name, "FEASIBLE")
         self.assertEqual(result.solver_name, "pyvrp")
         self.assertTrue(result.solution_found)
         if result.wall_time_seconds is not None:
             self.assertGreaterEqual(result.wall_time_seconds, 0.0)
-        covered = {j.label for r in sol.routes for j in r.jobs}
-        self.assertEqual(covered, {"j0", "j1"})
 
     def test_without_locations_uses_full_travel_edges(self) -> None:
         m = Model()

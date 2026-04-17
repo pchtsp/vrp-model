@@ -14,9 +14,6 @@ class Solver(ABC):
     name: str
     supported_features: frozenset[Feature]
 
-    def _default_solve_options(self) -> dict:
-        return {}
-
     @abstractmethod
     def _run(self, model: Model) -> SolutionStatus:
         """Attach ``model._solution`` and return run statistics (including :class:`SolveStatus`)."""

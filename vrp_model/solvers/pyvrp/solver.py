@@ -9,12 +9,18 @@ from typing import cast
 from vrp_model.core.errors import MappingError, SolverNotInstalledError
 from vrp_model.core.kinds import NodeKind
 from vrp_model.core.model import Feature, Model, SolveStatus
-from vrp_model.core.records import JobNodeRecord
 from vrp_model.core.solution import Route, Solution
 from vrp_model.core.travel_edges import TRAVEL_COST_INF, TravelEdgesMap
 from vrp_model.core.views import Depot, Job, Vehicle
+from vrp_model.solvers._helpers import (
+    depot_node_ids_ordered,
+    empty_instance_solution_status,
+    job_node_ids_ordered,
+    max_capacity_dims,
+    pad_vec,
+)
 from vrp_model.solvers.base import Solver
-from vrp_model.solvers.options import LOG_PATH, MSG, SEED, TIME_LIMIT
+from vrp_model.solvers.options import LOG_PATH, MSG, SEED, TIME_LIMIT, FullSolverOptions
 from vrp_model.solvers.pyvrp.bindings import (
     CAP_PAD,
     TW_LATE_DEFAULT,
@@ -31,13 +37,6 @@ from vrp_model.utils.distance import euclidean_int
 _PYVRP_PROGRESS_LOGGER = "pyvrp.ProgressPrinter"
 
 
-def _pad_vec(vec: list[int], dims: int) -> list[int]:
-    out = list(vec)
-    while len(out) < dims:
-        out.append(0)
-    return out[:dims]
-
-
 def _pad_capacity(cap: list[int], dims: int) -> list[int]:
     if len(cap) == 0:
         return []
@@ -47,32 +46,14 @@ def _pad_capacity(cap: list[int], dims: int) -> list[int]:
     return out[:dims]
 
 
-def _depot_node_ids_ordered(model: Model) -> list[int]:
-    return [i for i, row in enumerate(model._nodes) if row.kind == NodeKind.DEPOT]
-
-
-def _job_node_ids_ordered(model: Model) -> list[int]:
-    return [i for i, row in enumerate(model._nodes) if row.kind == NodeKind.JOB]
-
-
 def _pyvrp_location_unified_ids(model: Model) -> list[int]:
     """Map PyVRP location index -> unified node id.
 
     Order matches PyVRP: depots (ascending node id), then jobs (ascending node id).
     """
-    dep = _depot_node_ids_ordered(model)
-    jobs = _job_node_ids_ordered(model)
+    dep = depot_node_ids_ordered(model)
+    jobs = job_node_ids_ordered(model)
     return dep + jobs
-
-
-def _max_dims(model: Model) -> int:
-    d = 1
-    for v in model._vehicles:
-        d = max(d, len(v.capacity))
-    for row in model._nodes:
-        if row.kind == NodeKind.JOB:
-            d = max(d, len(cast(JobNodeRecord, row).demand))
-    return d
 
 
 def _export_name(label: str | None, idx: int, prefix: str) -> str:
@@ -132,7 +113,7 @@ class PyVRPSolver(Solver):
     )
 
     def __init__(self, options: dict | None = None) -> None:
-        self._options = merge_pyvrp_solver_options(options)
+        self._options: FullSolverOptions = merge_pyvrp_solver_options(options)
 
     def build_solver_model(self, model: Model) -> PyVRPModelLike:
         """Build PyVRP model from canonical ``model``. Read-only on ``self``."""
@@ -140,7 +121,7 @@ class PyVRPSolver(Solver):
         if pmc is None:
             raise SolverNotInstalledError('install the "pyvrp" extra to use PyVRPSolver')
 
-        dims = _max_dims(model)
+        dims = max_capacity_dims(model, min_dims=1)
         pickup_ids = {pd.pickup_job_node_id for pd in model._pickup_deliveries}
         delivery_ids = {pd.delivery_job_node_id for pd in model._pickup_deliveries}
 
@@ -171,8 +152,8 @@ class PyVRPSolver(Solver):
             row = model._nodes[i]
             if row.kind != NodeKind.JOB:
                 continue
-            job = cast(JobNodeRecord, row)
-            dem = _pad_vec(job.demand, dims)
+            job = row.as_job()
+            dem = pad_vec(job.demand, dims)
             if i in pickup_ids:
                 delivery: list[int] = [0] * dims
                 pickup = dem
@@ -267,10 +248,8 @@ class PyVRPSolver(Solver):
             raise SolverNotInstalledError('install the "pyvrp" extra to use PyVRPSolver')
 
         opts = self._options
-        tl = opts[TIME_LIMIT]
-        sd = opts[SEED]
-        max_rt = float(cast(float | int, tl))
-        seed = int(cast(int, sd))
+        max_rt = float(opts[TIME_LIMIT])
+        seed = int(opts[SEED])
         msg = bool(opts[MSG])
         log_path_raw = opts.get(LOG_PATH)
         pyvrp_display = msg or log_path_raw is not None
@@ -300,7 +279,7 @@ class PyVRPSolver(Solver):
         best = result.best
         routes_out: list[Route] = []
 
-        depot_ids = _depot_node_ids_ordered(model)
+        depot_ids = depot_node_ids_ordered(model)
         loc_order = _pyvrp_location_unified_ids(model)
         n_depot_py = len(depot_ids)
         n_locs = len(loc_order)
@@ -342,21 +321,10 @@ class PyVRPSolver(Solver):
         return Solution(routes=routes_out)
 
     def _run(self, model: Model) -> SolutionStatus:
-        job_ids = _job_node_ids_ordered(model)
+        job_ids = job_node_ids_ordered(model)
         if not job_ids:
             model._solution = Solution(routes=[])
-            return SolutionStatus(
-                mapped_status=SolveStatus.FEASIBLE,
-                solver_name=self.name,
-                wall_time_seconds=0.0,
-                optimality_gap=None,
-                solver_reported_cost=0.0,
-                stop_reason=SolverStopReason.COMPLETED,
-                solution_found=True,
-                iterations=0,
-                error_message=None,
-                solver_status="",
-            )
+            return empty_instance_solution_status(self.name, iterations=0)
 
         if PyVRPModel is None or PyVRPMaxRuntime is None:
             raise SolverNotInstalledError('install the "pyvrp" extra to use PyVRPSolver')
@@ -367,7 +335,7 @@ class PyVRPSolver(Solver):
         raw_status = SolveStatus.FEASIBLE if best.is_feasible() else SolveStatus.INFEASIBLE
         model._solution = self.find_solution_values(model, result)
 
-        tl = float(cast(float | int, self._options[TIME_LIMIT]))
+        tl = float(self._options[TIME_LIMIT])
         elapsed = float(result.runtime)
         if elapsed + 1e-6 >= tl:
             stop_reason = SolverStopReason.TIME_LIMIT

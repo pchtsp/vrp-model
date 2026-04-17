@@ -3,20 +3,26 @@
 from __future__ import annotations
 
 import time
-from typing import Any, cast
+from typing import Any
 
 from vrp_model.core.errors import SolverNotInstalledError
 from vrp_model.core.kinds import NodeKind
 from vrp_model.core.model import Feature, Model, SolveStatus
-from vrp_model.core.records import JobNodeRecord
 from vrp_model.core.solution import Route, Solution
 from vrp_model.core.views import Depot, Job, Vehicle
+from vrp_model.solvers._helpers import (
+    depot_node_ids_ordered,
+    empty_instance_solution_status,
+    job_node_ids_ordered,
+    max_capacity_dims,
+)
 from vrp_model.solvers.base import Solver
 from vrp_model.solvers.options import TIME_LIMIT
 from vrp_model.solvers.ortools.bindings import PyWrapCP
 from vrp_model.solvers.ortools.options import (
     FIRST_SOLUTION_STRATEGY,
     LOCAL_SEARCH_METAHEURISTIC,
+    FullORToolsSolverOptions,
     merge_ortools_solver_options,
 )
 from vrp_model.solvers.status import SolutionStatus, SolverStopReason
@@ -31,24 +37,6 @@ def _clamp_arc(value: int) -> int:
     if value < 0:
         return 0
     return int(value)
-
-
-def _depot_node_ids(model: Model) -> list[int]:
-    return [i for i, row in enumerate(model._nodes) if row.kind == NodeKind.DEPOT]
-
-
-def _job_node_ids_ordered(model: Model) -> list[int]:
-    return [i for i, row in enumerate(model._nodes) if row.kind == NodeKind.JOB]
-
-
-def _max_capacity_dims(model: Model) -> int:
-    d = 0
-    for v in model._vehicles:
-        d = max(d, len(v.capacity))
-    for row in model._nodes:
-        if row.kind == NodeKind.JOB:
-            d = max(d, len(cast(JobNodeRecord, row).demand))
-    return d
 
 
 def _build_distance_matrix(model: Model) -> list[list[int]]:
@@ -79,7 +67,7 @@ def _service_at_node(model: Model, node_id: int) -> int:
     row = model._nodes[node_id]
     if row.kind != NodeKind.JOB:
         return 0
-    return int(cast(JobNodeRecord, row).service_time)
+    return int(row.as_job().service_time)
 
 
 def _time_matrix_including_service(model: Model, leg: list[list[int]]) -> list[list[int]]:
@@ -94,12 +82,12 @@ def _time_matrix_including_service(model: Model, leg: list[list[int]]) -> list[l
 
 
 def _single_depot_topology(model: Model) -> bool:
-    return len(_depot_node_ids(model)) <= 1
+    return len(depot_node_ids_ordered(model)) <= 1
 
 
 def _any_job_requires_skills(model: Model) -> bool:
     for row in model._nodes:
-        if row.kind == NodeKind.JOB and bool(cast(JobNodeRecord, row).skills_required):
+        if row.kind == NodeKind.JOB and bool(row.as_job().skills_required):
             return True
     return False
 
@@ -122,7 +110,7 @@ def _register_matrix_or_vehicle_transits(
     pywrapcp = PyWrapCP
     assert pywrapcp is not None
     nveh = len(model._vehicles)
-    depot_ids = frozenset(_depot_node_ids(model))
+    depot_ids = frozenset(depot_node_ids_ordered(model))
 
     if uniform:
         mat_list = [[int(matrix[i][j]) for j in range(len(matrix))] for i in range(len(matrix))]
@@ -145,7 +133,7 @@ def _register_matrix_or_vehicle_transits(
                     return ORTOOLS_TRANSIT_CAP
                 row_t = model._nodes[tn]
                 if row_t.kind == NodeKind.JOB:
-                    req = cast(JobNodeRecord, row_t).skills_required
+                    req = row_t.as_job().skills_required
                     if req and not req <= sk:
                         return ORTOOLS_TRANSIT_CAP
                 return int(matrix[fn][tn])
@@ -159,13 +147,18 @@ def _register_matrix_or_vehicle_transits(
 
 def _needs_time_dimension(model: Model) -> bool:
     for row in model._nodes:
-        if row.kind == NodeKind.JOB and cast(JobNodeRecord, row).service_time > 0:
+        if row.kind != NodeKind.JOB:
+            continue
+        jr = row.as_job()
+        if jr.service_time > 0:
+            return True
+        if jr.time_window is not None:
+            return True
+        flex_j = jr.time_window_flex
+        if flex_j is not None and flex_j.has_soft_penalties():
             return True
     if any(v.time_window is not None for v in model._vehicles):
         return True
-    for row in model._nodes:
-        if row.kind == NodeKind.JOB and cast(JobNodeRecord, row).time_window is not None:
-            return True
     if any(v.max_route_time is not None for v in model._vehicles):
         return True
     if any(
@@ -174,12 +167,6 @@ def _needs_time_dimension(model: Model) -> bool:
         return True
     if any(v.max_slack_time is not None for v in model._vehicles):
         return True
-    for row in model._nodes:
-        if row.kind != NodeKind.JOB:
-            continue
-        flex = cast(JobNodeRecord, row).time_window_flex
-        if flex is not None and flex.has_soft_penalties():
-            return True
     for v in model._vehicles:
         flex = v.time_window_flex
         if flex is not None and flex.has_soft_penalties():
@@ -195,7 +182,7 @@ def _route_horizon(model: Model, dist: list[list[int]], time_m: list[list[int]])
     h = 1
     for row in model._nodes:
         if row.kind == NodeKind.JOB:
-            tw = cast(JobNodeRecord, row).time_window
+            tw = row.as_job().time_window
             if tw is not None:
                 h = max(h, int(tw[1]))
     for v in model._vehicles:
@@ -209,7 +196,7 @@ def _route_horizon(model: Model, dist: list[list[int]], time_m: list[list[int]])
             h = max(h, max(r))
     for row in model._nodes:
         if row.kind == NodeKind.JOB:
-            h += int(cast(JobNodeRecord, row).service_time)
+            h += int(row.as_job().service_time)
     return min(max(h, 10_000), ORTOOLS_TRANSIT_CAP)
 
 
@@ -241,7 +228,7 @@ class ORToolsSolver(Solver):
     )
 
     def __init__(self, options: dict | None = None) -> None:
-        self._options = merge_ortools_solver_options(options)
+        self._options: FullORToolsSolverOptions = merge_ortools_solver_options(options)
 
     def _run(self, model: Model) -> SolutionStatus:
         if PyWrapCP is None:
@@ -249,21 +236,11 @@ class ORToolsSolver(Solver):
                 'install the "ortools" extra to use ORToolsSolver',
             )
 
-        job_ids = _job_node_ids_ordered(model)
+        job_ids = job_node_ids_ordered(model)
         if not job_ids:
             model._solution = Solution(routes=[])
-            return SolutionStatus(
-                mapped_status=SolveStatus.FEASIBLE,
-                solver_name=self.name,
-                wall_time_seconds=0.0,
-                optimality_gap=None,
-                solver_reported_cost=0.0,
-                stop_reason=SolverStopReason.COMPLETED,
-                solution_found=True,
-                iterations=0,
-                error_message=None,
-                solver_status="",
-            )
+            st = empty_instance_solution_status(self.name, iterations=0)
+            return st
 
         t0 = time.perf_counter()
         pywrapcp = PyWrapCP
@@ -369,7 +346,7 @@ class ORToolsSolver(Solver):
             for node_id, row in enumerate(model._nodes):
                 if row.kind != NodeKind.JOB:
                     continue
-                jr = cast(JobNodeRecord, row)
+                jr = row.as_job()
                 idx = manager.NodeToIndex(node_id)
                 tw = jr.time_window
                 if tw is not None:
@@ -410,7 +387,7 @@ class ORToolsSolver(Solver):
                     time_dim.SetCumulVarSoftUpperBound(st, ub, c)
                     time_dim.SetCumulVarSoftUpperBound(en, ub, c)
 
-        dims = _max_capacity_dims(model)
+        dims = max_capacity_dims(model, min_dims=0)
         if dims > 0 and any(len(v.capacity) > 0 for v in model._vehicles):
 
             def demand_cb_factory(dim_idx: int) -> object:
@@ -419,7 +396,7 @@ class ORToolsSolver(Solver):
                     row = model._nodes[node]
                     if row.kind != NodeKind.JOB:
                         return 0
-                    dem = cast(JobNodeRecord, row).demand
+                    dem = row.as_job().demand
                     if dim_idx < len(dem):
                         return int(dem[dim_idx])
                     return 0
@@ -447,7 +424,7 @@ class ORToolsSolver(Solver):
         for node_id, row in enumerate(model._nodes):
             if row.kind != NodeKind.JOB:
                 continue
-            jr = cast(JobNodeRecord, row)
+            jr = row.as_job()
             if jr.prize is None:
                 continue
             idx = manager.NodeToIndex(node_id)
@@ -460,14 +437,15 @@ class ORToolsSolver(Solver):
             routing.AddPickupAndDelivery(pu, dl)
 
         params = pywrapcp.DefaultRoutingSearchParameters()
-        tl = float(cast(float | int, self._options[TIME_LIMIT]))
+        opts = self._options
+        tl = float(opts[TIME_LIMIT])
         params.time_limit.FromSeconds(int(max(1, round(tl))))
 
-        fss = self._options.get(FIRST_SOLUTION_STRATEGY)
+        fss = opts[FIRST_SOLUTION_STRATEGY]
         if isinstance(fss, int):
             params.first_solution_strategy = fss
 
-        ls = self._options.get(LOCAL_SEARCH_METAHEURISTIC)
+        ls = opts[LOCAL_SEARCH_METAHEURISTIC]
         if isinstance(ls, int):
             params.local_search_metaheuristic = ls
 
@@ -483,7 +461,7 @@ class ORToolsSolver(Solver):
                 optimality_gap=None,
                 solver_reported_cost=0.0,
                 stop_reason=SolverStopReason.INFEASIBLE,
-                solution_found=True,
+                solution_found=False,
                 iterations=0,
                 error_message=None,
                 solver_status="no assignment",

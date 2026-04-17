@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 
+from tests._vroom_probe import vroom_matrix_ok
 from tests.toy_instances import TOY_CASES, ToyCase
 from vrp_model import Model
 from vrp_model.solvers.base import Solver
@@ -23,7 +24,6 @@ except ModuleNotFoundError:
     PyVRPSolver = None  # type: ignore[misc, assignment]
 
 try:
-    import numpy as np
     import vroom  # noqa: F401
 
     from vrp_model.solvers.vroom import VroomSolver
@@ -31,17 +31,7 @@ except ModuleNotFoundError:
     VroomSolver = None  # type: ignore[misc, assignment]
     _VROOM_MATRIX_OK = False
 else:
-
-    def _vroom_matrix_probe() -> bool:
-        try:
-            inp = vroom.Input()
-            m = np.ascontiguousarray([[0, 1], [1, 0]], dtype=np.uint32)
-            inp.set_durations_matrix("car", m)
-        except RuntimeError:
-            return False
-        return True
-
-    _VROOM_MATRIX_OK = _vroom_matrix_probe()
+    _VROOM_MATRIX_OK = vroom_matrix_ok()
 
 try:
     import nextroute  # noqa: F401
@@ -87,31 +77,8 @@ def _assert_cost(toy: ToyCase, m: Model, tc: unittest.TestCase) -> None:
 
 
 def _structural(toy: ToyCase, m: Model, tc: unittest.TestCase) -> None:
-    sol = m.solution
-    assert sol is not None
-    if toy.name == "vehicle_fixed_cost":
-        for r in sol.routes:
-            if r.jobs:
-                tc.assertEqual(r.vehicle.label, "cheap_fixed")
-    elif toy.name == "skills":
-        for r in sol.routes:
-            for j in r.jobs:
-                if j.label == "needs_1":
-                    tc.assertTrue(j.skills_required <= frozenset(r.vehicle.skills))
-    elif toy.name == "multi_depot":
-        for r in sol.routes:
-            if not r.jobs:
-                continue
-            tc.assertEqual(r.end_depot.node_id, r.vehicle.end_depot.node_id)
-    elif toy.name == "heterogeneous_fleet":
-        for r in sol.routes:
-            for j in r.jobs:
-                if j.label == "heavy":
-                    tc.assertGreaterEqual(r.vehicle.capacity[0], 5)
-    elif toy.name == "prize_collecting":
-        # Canonical optimum skips optional (see tests.test_toy_instances_verify); heuristics
-        # may still visit it to reduce travel-only surrogate objectives.
-        pass
+    if toy.structural_check is not None:
+        toy.structural_check(m, tc)
 
 
 class TestToyInstancesSolvers(unittest.TestCase):

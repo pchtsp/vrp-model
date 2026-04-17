@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from vrp_model.core.errors import ValidationError
 from vrp_model.core.kinds import NodeKind
-from vrp_model.core.records import JobNodeRecord
 from vrp_model.core.time_window_flex import TimeWindowFlex
 from vrp_model.validation.tags import job_tag, vehicle_tag
 
@@ -54,7 +53,7 @@ def _time_windows(model: Model) -> None:
     for node_id, row in enumerate(model._nodes):
         if row.kind != NodeKind.JOB:
             continue
-        tw = cast(JobNodeRecord, row).time_window
+        tw = row.as_job().time_window
         if tw is not None:
             a, b = tw
             if a > b:
@@ -73,7 +72,7 @@ def _time_window_flex(model: Model) -> None:
     for node_id, row in enumerate(model._nodes):
         if row.kind != NodeKind.JOB:
             continue
-        job = cast(JobNodeRecord, row)
+        job = row.as_job()
         _check_one_time_window_flex(
             job.time_window,
             job.time_window_flex,
@@ -153,8 +152,8 @@ def _pickup_delivery_pair_skills(model: Model) -> None:
         dl = model._nodes[pd.delivery_job_node_id]
         if pu.kind != NodeKind.JOB or dl.kind != NodeKind.JOB:
             continue
-        req_pu = cast(JobNodeRecord, pu).skills_required
-        req_dl = cast(JobNodeRecord, dl).skills_required
+        req_pu = pu.as_job().skills_required
+        req_dl = dl.as_job().skills_required
         if not req_pu and not req_dl:
             continue
         if not any(req_pu <= v.skills and req_dl <= v.skills for v in vehicles):
@@ -172,7 +171,7 @@ def _capacity(model: Model) -> None:
     for row in model._nodes:
         if row.kind != NodeKind.JOB:
             continue
-        job_dims = max(job_dims, len(cast(JobNodeRecord, row).demand))
+        job_dims = max(job_dims, len(row.as_job().demand))
 
     max_cap: list[float] = []
     for v in model._vehicles:
@@ -188,7 +187,7 @@ def _capacity(model: Model) -> None:
     for node_id, row in enumerate(model._nodes):
         if row.kind != NodeKind.JOB:
             continue
-        dem = cast(JobNodeRecord, row).demand
+        dem = row.as_job().demand
         for i, q in enumerate(dem):
             limit = max_cap[i] if i < len(max_cap) else 0.0
             if float(q) > limit:
@@ -207,7 +206,7 @@ def _skill_ids_non_negative(model: Model) -> None:
     for node_id, row in enumerate(model._nodes):
         if row.kind != NodeKind.JOB:
             continue
-        for s in cast(JobNodeRecord, row).skills_required:
+        for s in row.as_job().skills_required:
             if s < 0:
                 raise ValidationError(
                     f"job {job_tag(model, node_id)} has negative skill id {s}",
@@ -222,7 +221,7 @@ def _skills(model: Model) -> None:
     for node_id, row in enumerate(model._nodes):
         if row.kind != NodeKind.JOB:
             continue
-        req = cast(JobNodeRecord, row).skills_required
+        req = row.as_job().skills_required
         if not req:
             continue
         if not any(req <= v.skills for v in vehicles):

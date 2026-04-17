@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections import Counter
+from collections.abc import Iterator, Sequence
 from enum import Enum, auto
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from vrp_model.core.errors import (
     SolutionUnavailableError,
@@ -39,6 +40,13 @@ class SolveStatus(Enum):
     INFEASIBLE = auto()
     UNKNOWN = auto()
     TIME_LIMIT = auto()
+
+
+class TravelAttr(Enum):
+    """Which travel cost to read from :class:`~vrp_model.core.travel_edges.TravelEdgeAttrs`."""
+
+    DISTANCE = auto()
+    DURATION = auto()
 
 
 class Feature(Enum):
@@ -276,7 +284,7 @@ class Model:
         for row in self._nodes:
             if row.kind != NodeKind.JOB:
                 continue
-            job_row = cast(JobNodeRecord, row)
+            job_row = row.as_job()
             demand = job_row.demand
             if any(d > 0 for d in demand):
                 features.add(Feature.CAPACITY)
@@ -386,7 +394,7 @@ class Model:
         for node_id, row in enumerate(self._nodes):
             if row.kind != NodeKind.JOB:
                 continue
-            jr = cast(JobNodeRecord, row)
+            jr = row.as_job()
             if jr.prize is None:
                 continue
             if node_id not in visited:
@@ -398,6 +406,94 @@ class Model:
 
         return total
 
+    def _routes_depots_match_vehicles(self, sol: Solution) -> bool:
+        for route in sol.routes:
+            v = route.vehicle
+            if route.start_depot.node_id != v.start_depot.node_id:
+                return False
+            if route.end_depot.node_id != v.end_depot.node_id:
+                return False
+        return True
+
+    def _job_node_ids_in_visit_order(self, sol: Solution) -> list[int]:
+        visited: list[int] = []
+        for route in sol.routes:
+            for j in route.jobs:
+                visited.append(j.node_id)
+        return visited
+
+    def _visit_counts_by_node_id(self, visited: Sequence[int]) -> dict[int, int]:
+        return dict(Counter(visited))
+
+    def _job_visits_are_unique(self, visited: Sequence[int]) -> bool:
+        return len(set(visited)) == len(visited)
+
+    def _mandatory_jobs_each_visited_once(
+        self, visit_by_node: dict[int, int]
+    ) -> bool:
+        for node_id, row in enumerate(self._nodes):
+            if row.kind != NodeKind.JOB:
+                continue
+            jr = row.as_job()
+            if jr.prize is not None:
+                continue
+            if visit_by_node.get(node_id, 0) != 1:
+                return False
+        return True
+
+    def _visit_count_keys_are_job_nodes(self, visit_by_node: dict[int, int]) -> bool:
+        for node_id in visit_by_node:
+            if self._nodes[node_id].kind != NodeKind.JOB:
+                return False
+        return True
+
+    def _capacity_dimension_count(self) -> int:
+        dims = 0
+        for row in self._nodes:
+            if row.kind == NodeKind.JOB:
+                dims = max(dims, len(row.as_job().demand))
+        for v in self._vehicles:
+            dims = max(dims, len(v.capacity))
+        return dims
+
+    def _route_within_capacity(self, route: Route, dims: int) -> bool:
+        cap = route.vehicle.capacity
+        if not cap:
+            return True
+        load = [0] * dims
+        cap_padded = (list(cap) + [0] * (dims - len(cap)))[:dims]
+        for j in route.jobs:
+            job_row = self._nodes[j.node_id].as_job()
+            dem = job_row.demand
+            dvec = (list(dem) + [0] * (dims - len(dem)))[:dims]
+            load = [load[i] + dvec[i] for i in range(dims)]
+            if any(load[i] > cap_padded[i] for i in range(dims)):
+                return False
+        return True
+
+    def _route_skills_satisfied(self, route: Route) -> bool:
+        vskills = frozenset(route.vehicle.skills)
+        for j in route.jobs:
+            req = self._nodes[j.node_id].as_job().skills_required
+            if req and not req <= vskills:
+                return False
+        return True
+
+    def _all_routes_within_capacity_and_skills(self, sol: Solution, dims: int) -> bool:
+        for route in sol.routes:
+            if not self._route_within_capacity(route, dims):
+                return False
+            if not self._route_skills_satisfied(route):
+                return False
+        return True
+
+    def _all_routes_pass_hard_timeline(self, sol: Solution) -> bool:
+        for route in sol.routes:
+            ok, _dist, _time = self._route_hard_feasibility(route)
+            if not ok:
+                return False
+        return True
+
     def is_solution_feasible(self) -> bool:
         """Hard feasibility only (mandatory coverage, depots, capacity, PD, skills, caps, TW).
 
@@ -405,81 +501,31 @@ class Model:
         violations and priced overtime within allowed caps are **not** failures here.
         """
         sol = self._require_solution()
-        visited: list[int] = []
-        for route in sol.routes:
-            v = route.vehicle
-            if route.start_depot.node_id != v.start_depot.node_id:
-                return False
-            if route.end_depot.node_id != v.end_depot.node_id:
-                return False
-            for j in route.jobs:
-                visited.append(j.node_id)
-
-        if len(set(visited)) != len(visited):
+        if not self._routes_depots_match_vehicles(sol):
             return False
-
-        for node_id, row in enumerate(self._nodes):
-            if row.kind != NodeKind.JOB:
-                continue
-            jr = cast(JobNodeRecord, row)
-            if jr.prize is not None:
-                continue
-            c = visited.count(node_id)
-            if c != 1:
-                return False
-
-        for node_id in visited:
-            if self._nodes[node_id].kind != NodeKind.JOB:
-                return False
-
-        if not self._feasibility_pickup_delivery(sol, visited):
+        visited = self._job_node_ids_in_visit_order(sol)
+        if not self._job_visits_are_unique(visited):
             return False
-
-        dims = 0
-        for row in self._nodes:
-            if row.kind == NodeKind.JOB:
-                job_row = cast(JobNodeRecord, row)
-                dims = max(dims, len(job_row.demand))
-        for v in self._vehicles:
-            dims = max(dims, len(v.capacity))
-
-        for route in sol.routes:
-            cap = route.vehicle.capacity
-            if not cap:
-                continue
-            load = [0] * dims
-            cap_padded = list(cap) + [0] * (dims - len(cap))
-            cap_padded = cap_padded[:dims]
-            for j in route.jobs:
-                job_row = cast(JobNodeRecord, self._nodes[j.node_id])
-                dem = job_row.demand
-                dvec = list(dem) + [0] * (dims - len(dem))
-                dvec = dvec[:dims]
-                load = [load[i] + dvec[i] for i in range(dims)]
-                if any(load[i] > cap_padded[i] for i in range(dims)):
-                    return False
-
-        for route in sol.routes:
-            vskills = frozenset(route.vehicle.skills)
-            for j in route.jobs:
-                job_row = cast(JobNodeRecord, self._nodes[j.node_id])
-                req = job_row.skills_required
-                if req and not req <= vskills:
-                    return False
-
-        for route in sol.routes:
-            ok, _dist, _time = self._route_hard_feasibility(route)
-            if not ok:
-                return False
-
+        visit_by_node = self._visit_counts_by_node_id(visited)
+        if not self._mandatory_jobs_each_visited_once(visit_by_node):
+            return False
+        if not self._visit_count_keys_are_job_nodes(visit_by_node):
+            return False
+        if not self._pickup_delivery_pairs_valid(sol, visited):
+            return False
+        dims = self._capacity_dimension_count()
+        if not self._all_routes_within_capacity_and_skills(sol, dims):
+            return False
+        if not self._all_routes_pass_hard_timeline(sol):
+            return False
         return True
 
     def _job_record(self, node_id: int) -> JobNodeRecord:
+        """Return the job record at ``node_id`` or raise :class:`ValidationError`."""
         row = self._nodes[node_id]
         if row.kind != NodeKind.JOB:
-            msg = f"node {node_id} is not a job"
-            raise TypeError(msg)
-        return cast(JobNodeRecord, row)
+            raise ValidationError(f"node {node_id} is not a job")
+        return row.as_job()
 
     def _visited_job_node_ids(self, sol: Solution) -> set[int]:
         out: set[int] = set()
@@ -501,7 +547,7 @@ class Model:
                 total += d
         return total
 
-    def _feasibility_pickup_delivery(self, sol: Solution, visited: list[int]) -> bool:
+    def _pickup_delivery_pairs_valid(self, sol: Solution, visited: list[int]) -> bool:
         job_pos: dict[int, tuple[int, int]] = {}
         for ri, route in enumerate(sol.routes):
             for pos, j in enumerate(route.jobs):
@@ -575,7 +621,7 @@ class Model:
             if dur >= TRAVEL_COST_INF:
                 return False, 0, 0, 0
             t += dur
-            jr = cast(JobNodeRecord, self._nodes[nid])
+            jr = self._nodes[nid].as_job()
             tw = jr.time_window
             if tw is not None:
                 if t > int(tw[1]):
@@ -652,70 +698,44 @@ class Model:
         if len(self._vehicles) <= 1:
             return False
         first = self._vehicles[0]
-        for v in self._vehicles[1:]:
-            if (
-                v.capacity != first.capacity
-                or v.time_window != first.time_window
-                or v.time_window_flex != first.time_window_flex
-                or v.skills != first.skills
-                or v.start_depot_node_id != first.start_depot_node_id
-                or v.end_depot_node_id != first.end_depot_node_id
-                or v.fixed_use_cost != first.fixed_use_cost
-                or v.max_route_distance != first.max_route_distance
-                or v.max_route_time != first.max_route_time
-                or v.max_route_overtime != first.max_route_overtime
-                or v.route_overtime_unit_cost != first.route_overtime_unit_cost
-                or v.max_slack_time != first.max_slack_time
-            ):
-                return True
-        return False
+        return any(v != first for v in self._vehicles[1:])
 
     def _planar_coord_for_node(self, node_id: int) -> tuple[float, float]:
         """Planar coordinates matching PyVRP adapter (synthetic axis for missing locations)."""
         syn_i = 0
-        for i in range(len(self._nodes)):
-            row = self._nodes[i]
-            if row.kind != NodeKind.DEPOT:
-                continue
-            loc = row.location
-            if loc is not None:
-                xy = (float(loc[0]), float(loc[1]))
-            else:
-                xy = (float(syn_i), 0.0)
-                syn_i += 1
-            if i == node_id:
-                return xy
-        for i in range(len(self._nodes)):
-            row = self._nodes[i]
-            if row.kind != NodeKind.JOB:
-                continue
-            loc = row.location
-            if loc is not None:
-                xy = (float(loc[0]), float(loc[1]))
-            else:
-                xy = (float(syn_i), 0.0)
-                syn_i += 1
-            if i == node_id:
-                return xy
+        for phase in (NodeKind.DEPOT, NodeKind.JOB):
+            for i, row in enumerate(self._nodes):
+                if row.kind != phase:
+                    continue
+                loc = row.location
+                if loc is not None:
+                    xy = (float(loc[0]), float(loc[1]))
+                else:
+                    xy = (float(syn_i), 0.0)
+                    syn_i += 1
+                if i == node_id:
+                    return xy
         msg = f"node_id {node_id} is not a depot or job"
         raise ValueError(msg)
 
-    def _directed_travel_distance(self, u: int, v: int) -> int:
+    def _directed_travel(self, u: int, v: int, attr: TravelAttr) -> int:
         if u == v:
             return 0
         if self._travel_edges:
             e = self._travel_edges.get((u, v))
-            if e is None or e.distance is None:
+            if e is None:
                 return TRAVEL_COST_INF
-            return int(e.distance)
+            if attr is TravelAttr.DISTANCE:
+                val = e.distance
+            else:
+                val = e.duration
+            if val is None:
+                return TRAVEL_COST_INF
+            return int(val)
         return euclidean_int(self._planar_coord_for_node(u), self._planar_coord_for_node(v))
 
+    def _directed_travel_distance(self, u: int, v: int) -> int:
+        return self._directed_travel(u, v, TravelAttr.DISTANCE)
+
     def _directed_travel_duration(self, u: int, v: int) -> int:
-        if u == v:
-            return 0
-        if self._travel_edges:
-            e = self._travel_edges.get((u, v))
-            if e is None or e.duration is None:
-                return TRAVEL_COST_INF
-            return int(e.duration)
-        return euclidean_int(self._planar_coord_for_node(u), self._planar_coord_for_node(v))
+        return self._directed_travel(u, v, TravelAttr.DURATION)

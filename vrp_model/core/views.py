@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from vrp_model.core.errors import ValidationError
 from vrp_model.core.kinds import NodeKind
@@ -64,6 +64,8 @@ class Vehicle:
 
     def __init__(self, model: Model, idx: int) -> None:
         self._model = model
+        if idx < 0 or idx >= len(model._vehicles):
+            raise ValidationError("vehicle index is out of range for this model")
         self._idx = idx
 
     @property
@@ -197,7 +199,7 @@ class Job:
         self._node_id = node_id
 
     def _job_row(self) -> JobNodeRecord:
-        return cast(JobNodeRecord, self._model._nodes[self._node_id])
+        return self._model._nodes[self._node_id].as_job()
 
     @property
     def node_id(self) -> int:
@@ -205,15 +207,15 @@ class Job:
 
     @property
     def label(self) -> str | None:
-        return self._model._nodes[self._node_id].label
+        return self._job_row().label
 
     @label.setter
     def label(self, value: str | None) -> None:
-        self._model._nodes[self._node_id].label = value
+        self._job_row().label = value
 
     @property
     def location(self) -> tuple[float, float] | None:
-        loc = self._model._nodes[self._node_id].location
+        loc = self._job_row().location
         if loc is None:
             return None
         return (float(loc[0]), float(loc[1]))
@@ -221,12 +223,9 @@ class Job:
     @location.setter
     def location(self, value: tuple[float, float] | None) -> None:
         if value is None:
-            self._model._nodes[self._node_id].location = None
+            self._job_row().location = None
         else:
-            self._model._nodes[self._node_id].location = (
-                float(value[0]),
-                float(value[1]),
-            )
+            self._job_row().location = (float(value[0]), float(value[1]))
 
     @property
     def demand(self) -> list[int]:

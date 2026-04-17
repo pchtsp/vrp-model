@@ -3,22 +3,35 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import cast
 
+from vrp_model.core.errors import ValidationError
 from vrp_model.core.kinds import NodeKind
 from vrp_model.core.time_window_flex import TimeWindowFlex
 
 
 @dataclass(slots=True)
-class DepotNodeRecord:
-    """Unified-node row for a depot."""
+class NodeBase:
+    """Shared fields for depot and job rows in unified node storage."""
 
     kind: NodeKind
     label: str | None
     location: tuple[float, float] | None
 
+    def as_job(self) -> JobNodeRecord:
+        """Return this row as a job record, or raise if it is a depot."""
+        if self.kind != NodeKind.JOB:
+            raise ValidationError("node is a depot, not a job")
+        return cast(JobNodeRecord, self)
+
 
 @dataclass(slots=True)
-class JobNodeRecord(DepotNodeRecord):
+class DepotNodeRecord(NodeBase):
+    """Unified-node row for a depot."""
+
+
+@dataclass(slots=True)
+class JobNodeRecord(NodeBase):
     """Unified-node row for a job / customer stop."""
 
     demand: list[int]
@@ -27,6 +40,9 @@ class JobNodeRecord(DepotNodeRecord):
     skills_required: frozenset[int]
     prize: float | None = None
     time_window_flex: TimeWindowFlex | None = None
+
+    def as_job(self) -> JobNodeRecord:
+        return self
 
 
 @dataclass(slots=True)
@@ -46,6 +62,30 @@ class VehicleRecord:
     max_route_overtime: int | None = None
     route_overtime_unit_cost: int = 0
     max_slack_time: int | None = None
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, VehicleRecord):
+            return NotImplemented
+        return (
+            self.capacity == other.capacity
+            and self.start_depot_node_id == other.start_depot_node_id
+            and self.end_depot_node_id == other.end_depot_node_id
+            and self.skills == other.skills
+            and self.time_window == other.time_window
+            and self.time_window_flex == other.time_window_flex
+            and self.fixed_use_cost == other.fixed_use_cost
+            and self.max_route_distance == other.max_route_distance
+            and self.max_route_time == other.max_route_time
+            and self.max_route_overtime == other.max_route_overtime
+            and self.route_overtime_unit_cost == other.route_overtime_unit_cost
+            and self.max_slack_time == other.max_slack_time
+        )
+
+    def __ne__(self, other: object) -> bool:
+        eq = self.__eq__(other)
+        if eq is NotImplemented:
+            return NotImplemented
+        return not eq
 
 
 @dataclass(slots=True)

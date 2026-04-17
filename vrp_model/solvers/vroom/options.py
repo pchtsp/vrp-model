@@ -2,10 +2,20 @@
 
 from __future__ import annotations
 
-from vrp_model.solvers.options import SolverOptions, default_solver_options
+from typing import TypedDict, cast
+
+from vrp_model.solvers.options import (
+    FullSolverOptions,
+    default_solver_options,
+    full_solver_options_from_dict,
+    merge_option_layers,
+)
+
+EXPLORATION_LEVEL = "exploration_level"
+NB_THREADS = "nb_threads"
 
 
-class VroomSolverOptions(SolverOptions, total=False):
+class VroomSolverOptions(TypedDict, total=False):
     """Options for :class:`~vrp_model.solvers.vroom.solver.VroomSolver`.
 
     Extra keys:
@@ -17,17 +27,22 @@ class VroomSolverOptions(SolverOptions, total=False):
     nb_threads: int
 
 
+class FullVroomSolverOptions(FullSolverOptions):
+    exploration_level: int
+    nb_threads: int
+
+
 def default_vroom_solver_options() -> dict[str, object]:
     base = default_solver_options()
-    base["exploration_level"] = 5
-    base["nb_threads"] = 4
+    base[EXPLORATION_LEVEL] = 5
+    base[NB_THREADS] = 4
     return base
 
 
-def merge_vroom_solver_options(*layers: dict | None) -> dict[str, object]:
-    merged: dict[str, object] = dict(default_vroom_solver_options())
-    for layer in layers:
-        if not layer:
-            continue
-        merged.update(layer)
-    return merged
+def merge_vroom_solver_options(*layers: dict | None) -> FullVroomSolverOptions:
+    merged = merge_option_layers(default_vroom_solver_options(), *layers)
+    std = full_solver_options_from_dict(merged)
+    combined: dict[str, object] = {**std}
+    combined[EXPLORATION_LEVEL] = int(cast(int, merged[EXPLORATION_LEVEL]))
+    combined[NB_THREADS] = int(cast(int, merged[NB_THREADS]))
+    return cast(FullVroomSolverOptions, combined)

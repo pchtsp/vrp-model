@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from tests.toy_instances import build_tiny_line_two_jobs
+from tests.tiny_line_solver import run_tiny_line_two_jobs
 from vrp_model import Model, TimeWindowFlex, TravelEdgeAttrs, TravelEdgesMap
 from vrp_model.core.errors import SolverNotInstalledError
 from vrp_model.solvers.ortools import ORToolsSolver
@@ -20,19 +20,10 @@ else:
 @unittest.skipIf(not _ORTOOLS_INSTALLED, "ortools extra not installed")
 class TestORToolsSolver(unittest.TestCase):
     def test_tiny_instance_feasible(self) -> None:
-        m = build_tiny_line_two_jobs()
-
-        solver = ORToolsSolver({"time_limit": 5.0})
-        result = solver.solve(m)
-        sol = m.solution
-        self.assertIsNotNone(sol)
-        assert sol is not None
-        self.assertTrue(m.is_solution_feasible())
+        result, _m = run_tiny_line_two_jobs(ORToolsSolver({"time_limit": 5.0}))
         self.assertIn(result.mapped_status.name, ("FEASIBLE", "OPTIMAL"))
         self.assertEqual(result.solver_name, "ortools")
         self.assertTrue(result.solution_found)
-        covered = {j.label for r in sol.routes for j in r.jobs}
-        self.assertEqual(covered, {"j0", "j1"})
 
     def test_without_locations_uses_full_travel_edges(self) -> None:
         m = Model()

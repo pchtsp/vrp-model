@@ -3,24 +3,30 @@
 from __future__ import annotations
 
 import time
-from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from datetime import datetime, timedelta
+from typing import Any
 
 from vrp_model.core.errors import SolverNotInstalledError
 from vrp_model.core.kinds import NodeKind
 from vrp_model.core.model import Feature, Model, SolveStatus
-from vrp_model.core.records import JobNodeRecord
 from vrp_model.core.solution import Route, Solution
 from vrp_model.core.travel_edges import TRAVEL_COST_INF
 from vrp_model.core.views import Depot, Job, Vehicle
+from vrp_model.solvers._helpers import (
+    empty_instance_solution_status,
+    job_node_ids_ordered,
+    max_capacity_dims,
+    pad_vec,
+)
 from vrp_model.solvers.base import Solver
 from vrp_model.solvers.nextroute.bindings import (
     NextrouteInput,
     nextroute_solve,
 )
 from vrp_model.solvers.nextroute.options import (
-    DEFAULT_SPEED_MPS,
+    SPEED_MPS,
     TIME_ANCHOR,
+    FullNextrouteSolverOptions,
     build_nextroute_engine_options,
     merge_nextroute_solver_options,
 )
@@ -29,27 +35,6 @@ from vrp_model.solvers.status import SolutionStatus, SolverStopReason
 
 _STOP_PREFIX = "j"
 _MATRIX_INF = 1e12
-
-
-def _job_node_ids_ordered(model: Model) -> list[int]:
-    return [i for i, row in enumerate(model._nodes) if row.kind == NodeKind.JOB]
-
-
-def _max_capacity_dims(model: Model) -> int:
-    d = 0
-    for v in model._vehicles:
-        d = max(d, len(v.capacity))
-    for row in model._nodes:
-        if row.kind == NodeKind.JOB:
-            d = max(d, len(cast(JobNodeRecord, row).demand))
-    return max(d, 1)
-
-
-def _pad_vec(vec: list[int], dims: int) -> list[int]:
-    out = list(vec)
-    while len(out) < dims:
-        out.append(0)
-    return out[:dims]
 
 
 def _resource_key(i: int) -> str:
@@ -117,7 +102,7 @@ class NextrouteSolver(Solver):
     )
 
     def __init__(self, options: dict | None = None) -> None:
-        self._options = merge_nextroute_solver_options(options)
+        self._options: FullNextrouteSolverOptions = merge_nextroute_solver_options(options)
 
     def _run(self, model: Model) -> SolutionStatus:
         if NextrouteInput is None or nextroute_solve is None:
@@ -125,31 +110,16 @@ class NextrouteSolver(Solver):
 
         from nextroute import Options as NextrouteOptions
 
-        job_ids = _job_node_ids_ordered(model)
+        job_ids = job_node_ids_ordered(model)
         if not job_ids:
             model._solution = Solution(routes=[])
-            return SolutionStatus(
-                mapped_status=SolveStatus.FEASIBLE,
-                solver_name=self.name,
-                wall_time_seconds=0.0,
-                optimality_gap=None,
-                solver_reported_cost=0.0,
-                stop_reason=SolverStopReason.COMPLETED,
-                solution_found=True,
-                iterations=None,
-                error_message=None,
-                solver_status="",
-            )
+            return empty_instance_solution_status(self.name)
 
         opts = self._options
-        anchor_raw = opts[TIME_ANCHOR]
-        if isinstance(anchor_raw, datetime):
-            anchor = anchor_raw if anchor_raw.tzinfo else anchor_raw.replace(tzinfo=UTC)
-        else:
-            anchor = datetime.fromisoformat(str(anchor_raw).replace("Z", "+00:00"))
-        speed = float(cast(float | int, opts.get("speed_mps", DEFAULT_SPEED_MPS)))
+        anchor = opts[TIME_ANCHOR]
+        speed = float(opts[SPEED_MPS])
 
-        dims = _max_capacity_dims(model)
+        dims = max_capacity_dims(model, min_dims=1)
         n = len(job_ids)
         m = len(model._vehicles)
         dim_m = n + 2 * m
@@ -184,8 +154,8 @@ class NextrouteSolver(Solver):
 
         stops_payload: list[dict[str, Any]] = []
         for jid in job_ids:
-            row = cast(JobNodeRecord, model._nodes[jid])
-            dem = _pad_vec(row.demand, dims)
+            row = model._nodes[jid].as_job()
+            dem = pad_vec(row.demand, dims)
             q: dict[str, int] = {}
             for i, qv in enumerate(dem):
                 key = _resource_key(i)
@@ -212,7 +182,7 @@ class NextrouteSolver(Solver):
 
         vehicles_payload: list[dict[str, Any]] = []
         for vi, veh in enumerate(model._vehicles):
-            cap = _pad_vec(list(veh.capacity), dims)
+            cap = pad_vec(list(veh.capacity), dims)
             cap_d = {_resource_key(i): int(c) for i, c in enumerate(cap)}
             start_lvl = {_resource_key(i): int(c) for i, c in enumerate(cap)}
             slon, slat = _lon_lat_for_node(model, veh.start_depot_node_id)
@@ -256,6 +226,8 @@ class NextrouteSolver(Solver):
         t0 = time.perf_counter()
         try:
             out = nextroute_solve(inp, engine_opts)
+        except KeyboardInterrupt:
+            raise
         except Exception as exc:  # pragma: no cover - subprocess errors
             return SolutionStatus(
                 mapped_status=SolveStatus.UNKNOWN,
@@ -321,7 +293,7 @@ class NextrouteSolver(Solver):
             obj_val = float(sol0.objective.value)
         feasible = bool(model.is_solution_feasible())
         mapped = SolveStatus.FEASIBLE if feasible else SolveStatus.INFEASIBLE
-        tl = float(cast(float | int, opts[TIME_LIMIT]))
+        tl = float(opts[TIME_LIMIT])
         if elapsed + 1e-6 >= tl and tl > 0:
             stop = SolverStopReason.TIME_LIMIT
         elif feasible:

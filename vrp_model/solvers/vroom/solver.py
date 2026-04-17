@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from datetime import timedelta
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 import pandas
@@ -12,36 +12,25 @@ import pandas
 from vrp_model.core.errors import MappingError, SolverNotInstalledError
 from vrp_model.core.kinds import NodeKind
 from vrp_model.core.model import Feature, Model, SolveStatus
-from vrp_model.core.records import JobNodeRecord
 from vrp_model.core.solution import Route, Solution
 from vrp_model.core.travel_edges import TRAVEL_COST_INF
 from vrp_model.core.views import Depot, Job, Vehicle
+from vrp_model.solvers._helpers import (
+    empty_instance_solution_status,
+    job_node_ids_ordered,
+    max_capacity_dims,
+    pad_vec,
+)
 from vrp_model.solvers.base import Solver
 from vrp_model.solvers.options import TIME_LIMIT
 from vrp_model.solvers.status import SolutionStatus, SolverStopReason
 from vrp_model.solvers.vroom.bindings import VROOM_PROFILE, VROOM_UINT32_MAX, VroomInput
-from vrp_model.solvers.vroom.options import merge_vroom_solver_options
-
-
-def _job_node_ids_ordered(model: Model) -> list[int]:
-    return [i for i, row in enumerate(model._nodes) if row.kind == NodeKind.JOB]
-
-
-def _max_capacity_dims(model: Model) -> int:
-    d = 0
-    for v in model._vehicles:
-        d = max(d, len(v.capacity))
-    for row in model._nodes:
-        if row.kind == NodeKind.JOB:
-            d = max(d, len(cast(JobNodeRecord, row).demand))
-    return max(d, 1)
-
-
-def _pad_vec(vec: list[int], dims: int) -> list[int]:
-    out = list(vec)
-    while len(out) < dims:
-        out.append(0)
-    return out[:dims]
+from vrp_model.solvers.vroom.options import (
+    EXPLORATION_LEVEL,
+    NB_THREADS,
+    FullVroomSolverOptions,
+    merge_vroom_solver_options,
+)
 
 
 def _clamp_mat(value: int) -> int:
@@ -93,27 +82,16 @@ class VroomSolver(Solver):
     )
 
     def __init__(self, options: dict | None = None) -> None:
-        self._options = merge_vroom_solver_options(options)
+        self._options: FullVroomSolverOptions = merge_vroom_solver_options(options)
 
     def _run(self, model: Model) -> SolutionStatus:
         if VroomInput is None:
             raise SolverNotInstalledError('install the "vroom" extra to use VroomSolver')
 
-        job_ids = _job_node_ids_ordered(model)
+        job_ids = job_node_ids_ordered(model)
         if not job_ids:
             model._solution = Solution(routes=[])
-            return SolutionStatus(
-                mapped_status=SolveStatus.FEASIBLE,
-                solver_name=self.name,
-                wall_time_seconds=0.0,
-                optimality_gap=None,
-                solver_reported_cost=0.0,
-                stop_reason=SolverStopReason.COMPLETED,
-                solution_found=True,
-                iterations=None,
-                error_message=None,
-                solver_status="",
-            )
+            return empty_instance_solution_status(self.name)
 
         t0 = time.perf_counter()
         try:
@@ -131,7 +109,7 @@ class VroomSolver(Solver):
         import vroom
         from vroom.time_window import TimeWindow as VroomTimeWindow
 
-        dims = _max_capacity_dims(model)
+        dims = max_capacity_dims(model, min_dims=1)
         pd_pickups = {p.pickup_job_node_id for p in model._pickup_deliveries}
         pd_deliveries = {p.delivery_job_node_id for p in model._pickup_deliveries}
         in_pd = pd_pickups | pd_deliveries
@@ -140,9 +118,9 @@ class VroomSolver(Solver):
         for pair in model._pickup_deliveries:
             pu_id = pair.pickup_job_node_id
             dl_id = pair.delivery_job_node_id
-            pu_row = cast(JobNodeRecord, model._nodes[pu_id])
-            dl_row = cast(JobNodeRecord, model._nodes[dl_id])
-            amt = _pad_vec(pu_row.demand, dims)
+            pu_row = model._nodes[pu_id].as_job()
+            dl_row = model._nodes[dl_id].as_job()
+            amt = pad_vec(pu_row.demand, dims)
             skills = set(pu_row.skills_required) | set(dl_row.skills_required)
             pickup_step = vroom.ShipmentStep(
                 pu_id,
@@ -168,8 +146,8 @@ class VroomSolver(Solver):
         for nid in job_ids:
             if nid in in_pd:
                 continue
-            row = cast(JobNodeRecord, model._nodes[nid])
-            dem = _pad_vec(row.demand, dims)
+            row = model._nodes[nid].as_job()
+            dem = pad_vec(row.demand, dims)
             tws = _vroom_tws(row.time_window)
             jobs_payload.append(
                 vroom.Job(
@@ -188,7 +166,7 @@ class VroomSolver(Solver):
         for vi, veh in enumerate(model._vehicles):
             sd = veh.start_depot_node_id
             ed = veh.end_depot_node_id if veh.end_depot_node_id is not None else sd
-            cap = _pad_vec(list(veh.capacity), dims)
+            cap = pad_vec(list(veh.capacity), dims)
             if not cap:
                 cap = [0] * dims
             vtw = veh.time_window
@@ -212,13 +190,15 @@ class VroomSolver(Solver):
             )
 
         opts = self._options
-        exploration = int(cast(int, opts.get("exploration_level", 5)))
-        nb_threads = int(cast(int, opts.get("nb_threads", 4)))
-        tl = float(cast(float | int, opts[TIME_LIMIT]))
+        exploration = int(opts[EXPLORATION_LEVEL])
+        nb_threads = int(opts[NB_THREADS])
+        tl = float(opts[TIME_LIMIT])
         timeout = timedelta(seconds=tl) if tl > 0 else None
 
         try:
             sol = inp.solve(exploration, nb_threads=nb_threads, timeout=timeout)
+        except KeyboardInterrupt:
+            raise
         except Exception as exc:  # pragma: no cover - backend-specific
             return SolutionStatus(
                 mapped_status=SolveStatus.UNKNOWN,
