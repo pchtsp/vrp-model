@@ -1,0 +1,44 @@
+# Publishes to Test PyPI first, then PyPI. Uses OIDC trusted publishing (no long-lived API tokens).
+# Setup: register this repo as a trusted publisher on both https://test.pypi.org and https://pypi.org
+# (Project → Publishing settings → Add a new pending publisher → GitHub).
+
+name: Publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      publish_to_pypi:
+        description: "After Test PyPI, publish to production PyPI (releases always do both)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Publish to Test PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+      - name: Publish to PyPI
+        if: >-
+          github.event_name == 'release' ||
+          (github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.publish_to_pypi == 'true')
+        uses: pypa/gh-action-pypi-publish@release/v1
