@@ -31,3 +31,10 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+# Optional solver deps may be absent; bindings use lazy try/import — suppress unresolved-import only there.
+[[tool.ty.overrides]]
+include = ["vrp_model/solvers/**/bindings.py"]
+
+[tool.ty.overrides.rules]
+unresolved-import = "ignore"

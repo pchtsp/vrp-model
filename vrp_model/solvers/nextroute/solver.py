@@ -21,6 +21,7 @@ from vrp_model.solvers._helpers import (
 from vrp_model.solvers.base import Solver
 from vrp_model.solvers.nextroute.bindings import (
     NextrouteInput,
+    NextrouteOptions,
     nextroute_solve,
 )
 from vrp_model.solvers.nextroute.options import (
@@ -105,10 +106,8 @@ class NextrouteSolver(Solver):
         self._options: FullNextrouteSolverOptions = merge_nextroute_solver_options(options)
 
     def _run(self, model: Model) -> SolutionStatus:
-        if NextrouteInput is None or nextroute_solve is None:
+        if NextrouteInput is None or nextroute_solve is None or NextrouteOptions is None:
             raise SolverNotInstalledError('install the "nextroute" extra to use NextrouteSolver')
-
-        from nextroute import Options as NextrouteOptions
 
         job_ids = job_node_ids_ordered(model)
         if not job_ids:
