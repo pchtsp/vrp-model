@@ -14,6 +14,34 @@ if TYPE_CHECKING:
     from vrp_model.core.model import Model
 
 
+class JobGroup:
+    """View of one mutually exclusive job group stored on :class:`~vrp_model.core.model.Model`."""
+
+    __slots__ = ("_model", "_index")
+
+    def __init__(self, model: Model, index: int) -> None:
+        if index < 0 or index >= len(model._job_groups):
+            raise ValidationError("job group index is out of range for this model")
+        self._model = model
+        self._index = index
+
+    @property
+    def index(self) -> int:
+        """Index of this group in :attr:`~vrp_model.core.model.Model.job_groups` order."""
+        return self._index
+
+    @property
+    def member_jobs(self) -> list[Job]:
+        """Jobs in this group (same order as registration)."""
+        g = self._model._job_groups[self._index]
+        return [Job(self._model, nid) for nid in g.member_job_node_ids]
+
+    @property
+    def skip_penalty(self) -> int | None:
+        """``None`` → mandatory group (exactly one member served); else optional skip cost."""
+        return self._model._job_groups[self._index].skip_penalty
+
+
 class Depot:
     """Read/write view of a depot row in :class:`~vrp_model.core.model.Model` storage."""
 

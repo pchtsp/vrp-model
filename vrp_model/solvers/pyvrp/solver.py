@@ -109,6 +109,7 @@ class PyVRPSolver(Solver):
             Feature.MAX_ROUTE_DISTANCE,
             Feature.MAX_ROUTE_TIME,
             Feature.ROUTE_OVERTIME,
+            Feature.JOB_GROUPS,
         },
     )
 
@@ -139,6 +140,12 @@ class PyVRPSolver(Solver):
         n_nodes = len(model._nodes)
         solver_node_for_id: list[object | None] = [None] * n_nodes
 
+        pyvrp_group_for_job: dict[int, object] = {}
+        for grec in model._job_groups:
+            cg = pm.add_client_group(required=grec.skip_penalty is None)
+            for nid in grec.member_job_node_ids:
+                pyvrp_group_for_job[int(nid)] = cg
+
         for i in range(n_nodes):
             row = model._nodes[i]
             if row.kind != NodeKind.DEPOT:
@@ -168,13 +175,20 @@ class PyVRPSolver(Solver):
             tw = job.time_window
             tw_early = int(tw[0]) if tw is not None else 0
             tw_late = int(tw[1]) if tw is not None else TW_LATE_DEFAULT
-            prize_raw = job.prize
-            if prize_raw is not None:
-                prize = int(round(float(prize_raw)))
-                required = False
-            else:
+            grp = pyvrp_group_for_job.get(i)
+            if grp is not None:
                 prize = 0
-                required = True
+                required = False
+                client_kw: dict[str, object] = {"group": grp}
+            else:
+                prize_raw = job.prize
+                if prize_raw is not None:
+                    prize = int(round(float(prize_raw)))
+                    required = False
+                else:
+                    prize = 0
+                    required = True
+                client_kw = {}
 
             name = _export_name(job.label, i, "job")
             c_obj = pm.add_client(
@@ -188,6 +202,7 @@ class PyVRPSolver(Solver):
                 prize=prize,
                 required=required,
                 name=name,
+                **client_kw,
             )
             solver_node_for_id[i] = c_obj
 

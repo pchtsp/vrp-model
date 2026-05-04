@@ -15,6 +15,7 @@ from vrp_model.core.errors import (
 from vrp_model.core.kinds import NodeKind
 from vrp_model.core.records import (
     DepotNodeRecord,
+    JobGroupRecord,
     JobNodeRecord,
     NodeRecord,
     PickupDeliveryRecord,
@@ -24,7 +25,7 @@ from vrp_model.core.solution import Route, Solution
 from vrp_model.core.storage import normalize_load, skills_to_frozen
 from vrp_model.core.time_window_flex import TimeWindowFlex
 from vrp_model.core.travel_edges import TRAVEL_COST_INF, TravelEdgeAttrs, TravelEdgesMap
-from vrp_model.core.views import Depot, Job, Vehicle
+from vrp_model.core.views import Depot, Job, JobGroup, Vehicle
 from vrp_model.utils.distance import euclidean_int
 from vrp_model.validation import consistency, feasibility, structure
 
@@ -65,6 +66,7 @@ class Feature(Enum):
     MAX_ROUTE_TIME = auto()
     ROUTE_OVERTIME = auto()
     MAX_NODE_SLACK = auto()
+    JOB_GROUPS = auto()
 
 
 class Model:
@@ -74,6 +76,7 @@ class Model:
         "_nodes",
         "_vehicles",
         "_pickup_deliveries",
+        "_job_groups",
         "_solution",
         "_travel_edges",
     )
@@ -82,6 +85,7 @@ class Model:
         self._nodes: list[NodeRecord] = []
         self._vehicles: list[VehicleRecord] = []
         self._pickup_deliveries: list[PickupDeliveryRecord] = []
+        self._job_groups: list[JobGroupRecord] = []
         self._solution: Solution | None = None
         self._travel_edges: TravelEdgesMap = {}
 
@@ -261,6 +265,45 @@ class Model:
             ),
         )
 
+    def add_job_group(
+        self,
+        jobs: Sequence[Job],
+        *,
+        skip_penalty: int | None = None,
+    ) -> JobGroup:
+        """Register mutually exclusive jobs (at most one visited).
+
+        ``skip_penalty is None`` → mandatory group: exactly one member must be served.
+        Otherwise optional: at most one member; skipping the whole group costs ``skip_penalty``.
+
+        Semantic constraints (prize, pickup–delivery overlap, disjoint groups) are enforced in
+        :meth:`validate` only.
+        """
+        node_ids: list[int] = []
+        for j in jobs:
+            self._require_view_on_model(j)
+            node_ids.append(j.node_id)
+        if len(node_ids) != len(set(node_ids)):
+            raise ValidationError("job group members must be distinct jobs")
+        rec = JobGroupRecord(member_job_node_ids=tuple(node_ids), skip_penalty=skip_penalty)
+        self._job_groups.append(rec)
+        return JobGroup(self, len(self._job_groups) - 1)
+
+    @property
+    def job_groups(self) -> Iterator[JobGroup]:
+        """Yield job group views in registration order."""
+        for i in range(len(self._job_groups)):
+            yield JobGroup(self, i)
+
+    def job_group_index(self, job: Job) -> int | None:
+        """Index into :attr:`job_groups` if ``job`` belongs to a group, else ``None``."""
+        self._require_view_on_model(job)
+        nid = job.node_id
+        for i, g in enumerate(self._job_groups):
+            if nid in g.member_job_node_ids:
+                return i
+        return None
+
     def validate(self) -> None:
         """Run structure, consistency, and feasibility checks (may normalize travel edges)."""
         structure.validate(self)
@@ -328,6 +371,9 @@ class Model:
         if self._fleet_is_heterogeneous():
             features.add(Feature.HETEROGENEOUS_FLEET)
 
+        if self._job_groups:
+            features.add(Feature.JOB_GROUPS)
+
         return frozenset(features)
 
     @property
@@ -355,8 +401,35 @@ class Model:
         return [j for j in self.jobs if j.node_id not in on_route]
 
     def mandatory_unassigned_jobs(self) -> list[Job]:
-        """Mandatory jobs (``prize is None``) that are not on any route."""
-        return [j for j in self.unassigned_jobs() if self._job_record(j.node_id).prize is None]
+        """Jobs that are mandatory-for-coverage but missing from :attr:`solution`.
+
+        Includes every ungrouped mandatory job (``prize is None``) not on a route. For a **mandatory
+        job group** (``skip_penalty is None``), if **no** member is visited, **each** member job is
+        listed (each alternative was skipped).
+        """
+        sol = self._require_solution()
+        visited = self._visited_job_node_ids(sol)
+        out: list[Job] = []
+        in_any_group: set[int] = set()
+        for g in self._job_groups:
+            in_any_group.update(g.member_job_node_ids)
+
+        for g in self._job_groups:
+            members = g.member_job_node_ids
+            hits = sum(1 for nid in members if nid in visited)
+            if g.skip_penalty is None and hits == 0:
+                for nid in members:
+                    out.append(Job(self, nid))
+
+        for j in self.jobs:
+            nid = j.node_id
+            if nid in in_any_group:
+                continue
+            if self._job_record(nid).prize is not None:
+                continue
+            if nid not in visited:
+                out.append(j)
+        return out
 
     def solution_travel_distance(self) -> float:
         """Sum of leg distances over all routes only (no prizes, fixed costs, or soft penalties)."""
@@ -370,7 +443,9 @@ class Model:
         * total **travel distance** (same rules as :meth:`_directed_travel_distance`);
         * **fixed_use_cost** for each route that serves at least one job;
         * **skip penalties** for **optional** jobs (``prize is not None``) that are not visited
-          — each adds ``round(float(prize))``;
+          — each adds ``round(float(prize))`` (not used for jobs in a :meth:`add_job_group`);
+        * **skip penalties** for **optional job groups** (``skip_penalty is not None``) when no
+          member is visited — adds that ``skip_penalty`` once;
         * **linear soft time-window** penalties from
           :class:`~vrp_model.core.time_window_flex.TimeWindowFlex` on jobs and vehicles
           (evaluated at service start / route start/end times);
@@ -379,8 +454,9 @@ class Model:
 
         Does **not** yet model ``max_slack_time`` penalties (reserved for a later revision).
 
-        Mandatory jobs are those with ``prize is None``; optional jobs use a non-``None`` prize
-        as the skip penalty coefficient.
+        Standalone mandatory jobs are those with ``prize is None`` and not in a job group; optional
+        singles use a non-``None`` ``prize`` as the skip penalty. Job groups use
+        :meth:`add_job_group` only.
         """
         sol = self._require_solution()
         visited = self._visited_job_node_ids(sol)
@@ -391,14 +467,24 @@ class Model:
             vrec = self._vehicles[route.vehicle._idx]
             total += float(vrec.fixed_use_cost)
 
+        grouped = self._grouped_job_node_ids()
         for node_id, row in enumerate(self._nodes):
             if row.kind != NodeKind.JOB:
+                continue
+            if node_id in grouped:
                 continue
             jr = row.as_job()
             if jr.prize is None:
                 continue
             if node_id not in visited:
                 total += float(round(float(jr.prize)))
+
+        for g in self._job_groups:
+            sp = g.skip_penalty
+            if sp is None:
+                continue
+            if not any(nid in visited for nid in g.member_job_node_ids):
+                total += float(sp)
 
         for route in sol.routes:
             soft, overtime = self._route_soft_and_overtime_costs(route)
@@ -428,9 +514,30 @@ class Model:
     def _job_visits_are_unique(self, visited: Sequence[int]) -> bool:
         return len(set(visited)) == len(visited)
 
+    def _grouped_job_node_ids(self) -> frozenset[int]:
+        ids: set[int] = set()
+        for g in self._job_groups:
+            ids.update(g.member_job_node_ids)
+        return frozenset(ids)
+
+    def _job_group_coverage_ok(self, visit_by_node: dict[int, int]) -> bool:
+        for g in self._job_groups:
+            members = g.member_job_node_ids
+            total = sum(visit_by_node.get(nid, 0) for nid in members)
+            if g.skip_penalty is None:
+                if total != 1:
+                    return False
+            else:
+                if total > 1:
+                    return False
+        return True
+
     def _mandatory_jobs_each_visited_once(self, visit_by_node: dict[int, int]) -> bool:
+        grouped = self._grouped_job_node_ids()
         for node_id, row in enumerate(self._nodes):
             if row.kind != NodeKind.JOB:
+                continue
+            if node_id in grouped:
                 continue
             jr = row.as_job()
             if jr.prize is not None:
@@ -506,6 +613,8 @@ class Model:
             return False
         visit_by_node = self._visit_counts_by_node_id(visited)
         if not self._mandatory_jobs_each_visited_once(visit_by_node):
+            return False
+        if not self._job_group_coverage_ok(visit_by_node):
             return False
         if not self._visit_count_keys_are_job_nodes(visit_by_node):
             return False

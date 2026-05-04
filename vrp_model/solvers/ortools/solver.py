@@ -29,6 +29,8 @@ from vrp_model.solvers.status import SolutionStatus, SolverStopReason
 
 # OR-Tools transit values must stay within practical int32-friendly range.
 ORTOOLS_TRANSIT_CAP = 2_000_000_000
+# Disjunction penalty when a mandatory job group would otherwise be skipped entirely.
+ORTOOLS_MANDATORY_JOB_GROUP_PENALTY = ORTOOLS_TRANSIT_CAP - 1
 
 
 def _clamp_arc(value: int) -> int:
@@ -224,6 +226,7 @@ class ORToolsSolver(Solver):
             Feature.MAX_ROUTE_TIME,
             Feature.ROUTE_OVERTIME,
             Feature.MAX_NODE_SLACK,
+            Feature.JOB_GROUPS,
         },
     )
 
@@ -421,8 +424,21 @@ class ORToolsSolver(Solver):
                     name,
                 )
 
+        in_job_group: set[int] = set()
+        for g in model._job_groups:
+            in_job_group.update(g.member_job_node_ids)
+            indices = [manager.NodeToIndex(int(nid)) for nid in g.member_job_node_ids]
+            sp = g.skip_penalty
+            if sp is None:
+                penalty = int(ORTOOLS_MANDATORY_JOB_GROUP_PENALTY)
+            else:
+                penalty = int(sp)
+            routing.AddDisjunction(indices, penalty)
+
         for node_id, row in enumerate(model._nodes):
             if row.kind != NodeKind.JOB:
+                continue
+            if node_id in in_job_group:
                 continue
             jr = row.as_job()
             if jr.prize is None:

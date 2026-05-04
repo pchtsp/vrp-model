@@ -96,4 +96,12 @@ class PickupDeliveryRecord:
     delivery_job_node_id: int
 
 
+@dataclass(frozen=True, slots=True)
+class JobGroupRecord:
+    """Mutually exclusive jobs: at most one visit among members (see ``skip_penalty``)."""
+
+    member_job_node_ids: tuple[int, ...]
+    skip_penalty: int | None = None
+
+
 NodeRecord = DepotNodeRecord | JobNodeRecord

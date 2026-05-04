@@ -14,6 +14,13 @@ except ModuleNotFoundError:
 else:
     _ORTOOLS_INSTALLED = True
 
+try:
+    import vroom  # noqa: F401
+
+    from vrp_model.solvers.vroom import VroomSolver
+except ModuleNotFoundError:
+    VroomSolver = None  # type: ignore[misc, assignment]
+
 
 class TestSolverCapability(unittest.TestCase):
     def test_pyvrp_rejects_skills(self) -> None:
@@ -38,6 +45,19 @@ class TestSolverCapability(unittest.TestCase):
         solver = ORToolsSolver({"time_limit": 5.0})
         solver.solve(m)
         self.assertIsNotNone(m.solution)
+
+    @unittest.skipIf(VroomSolver is None, "vroom extra not installed")
+    def test_vroom_rejects_job_groups(self) -> None:
+        m = Model()
+        d = m.add_depot(location=(0.0, 0.0))
+        m.add_vehicle([10], d)
+        a = m.add_job(1, location=(1.0, 0.0))
+        b = m.add_job(1, location=(2.0, 0.0))
+        m.add_job_group([a, b])
+        m.validate()
+
+        with self.assertRaises(SolverCapabilityError):
+            VroomSolver().solve(m)
 
 
 if __name__ == "__main__":
