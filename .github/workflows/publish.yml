@@ -31,10 +31,13 @@ jobs:
       - name: Build sdist and wheel
         run: uv build
 
+      # Attestations default to on; a second publish sees existing *.publish.attestation
+      # and fails. Disable for Test PyPI; production step keeps attestations.
       - name: Publish to Test PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
+          attestations: false
 
       - name: Publish to PyPI
         if: >-
