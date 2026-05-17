@@ -20,7 +20,7 @@ from vrp_model.solvers._helpers import (
     pad_vec,
 )
 from vrp_model.solvers.base import Solver
-from vrp_model.solvers.options import LOG_PATH, MSG, SEED, TIME_LIMIT, FullSolverOptions
+from vrp_model.solvers.options import LOG_PATH, MSG, SEED, TIME_LIMIT
 from vrp_model.solvers.pyvrp.bindings import (
     CAP_PAD,
     TW_LATE_DEFAULT,
@@ -30,7 +30,11 @@ from vrp_model.solvers.pyvrp.bindings import (
     PyVRPModelLike,
     PyVRPResultLike,
 )
-from vrp_model.solvers.pyvrp.options import merge_pyvrp_solver_options
+from vrp_model.solvers.pyvrp.options import (
+    SKILL_INCOMPATIBLE_COST,
+    PyVRPSolverOptions,
+    merge_pyvrp_solver_options,
+)
 from vrp_model.solvers.status import SolutionStatus, SolverStopReason
 from vrp_model.utils.distance import euclidean_int
 
@@ -72,6 +76,32 @@ def _euclidean_leg(solver_node_for_id: list[object], i: int, j: int) -> tuple[in
     return dist, dist
 
 
+def _any_job_requires_skills(model: Model) -> bool:
+    for row in model._nodes:
+        if row.kind == NodeKind.JOB and bool(row.as_job().skills_required):
+            return True
+    return False
+
+
+def _profile_name_for_skills(skills: frozenset[int]) -> str:
+    if not skills:
+        return "skills_none"
+    return "skills_" + "_".join(str(s) for s in sorted(skills))
+
+
+def _build_skill_profiles(
+    pm: PyVRPModelLike,
+    model: Model,
+) -> dict[frozenset[int], object]:
+    """One PyVRP routing profile per unique vehicle skill set."""
+    profiles: dict[frozenset[int], object] = {}
+    for veh in model._vehicles:
+        sk = veh.skills
+        if sk not in profiles:
+            profiles[sk] = pm.add_profile(name=_profile_name_for_skills(sk))
+    return profiles
+
+
 def _add_resolved_edges(
     pm: PyVRPModelLike,
     solver_node_for_id: list[object],
@@ -95,6 +125,46 @@ def _add_resolved_edges(
             pm.add_edge(solver_node_for_id[i], solver_node_for_id[j], d, t)
 
 
+def _add_skill_profile_edges(
+    pm: PyVRPModelLike,
+    solver_node_for_id: list[object],
+    model: Model,
+    profiles_by_skills: dict[frozenset[int], object],
+    *,
+    blocked_cost: int,
+) -> None:
+    """Profile-specific overrides: prohibit arcs into jobs a profile's vehicles cannot serve."""
+    n_nodes = len(model._nodes)
+    location_nodes: list[object] = []
+    for i in range(n_nodes):
+        sn = solver_node_for_id[i]
+        if sn is not None:
+            location_nodes.append(sn)
+
+    for vskills, profile in profiles_by_skills.items():
+        for j in range(n_nodes):
+            row = model._nodes[j]
+            if row.kind != NodeKind.JOB:
+                continue
+            req = row.as_job().skills_required
+            if not req or req <= vskills:
+                continue
+            to_obj = solver_node_for_id[j]
+            if to_obj is None:
+                msg = "internal error: job node missing PyVRP object for skill edges"
+                raise RuntimeError(msg)
+            for frm in location_nodes:
+                if frm is to_obj:
+                    continue
+                pm.add_edge(
+                    frm,
+                    to_obj,
+                    blocked_cost,
+                    blocked_cost,
+                    profile=profile,
+                )
+
+
 class PyVRPSolver(Solver):
     name = "pyvrp"
     supported_features = frozenset(
@@ -110,11 +180,12 @@ class PyVRPSolver(Solver):
             Feature.MAX_ROUTE_TIME,
             Feature.ROUTE_OVERTIME,
             Feature.JOB_GROUPS,
+            Feature.SKILLS,
         },
     )
 
     def __init__(self, options: dict | None = None) -> None:
-        self._options: FullSolverOptions = merge_pyvrp_solver_options(options)
+        self._options: PyVRPSolverOptions = merge_pyvrp_solver_options(options)
 
     def build_solver_model(self, model: Model) -> PyVRPModelLike:
         """Build PyVRP model from canonical ``model``. Read-only on ``self``."""
@@ -212,13 +283,28 @@ class PyVRPSolver(Solver):
             raise RuntimeError(msg)
 
         use_euclidean = len(model._travel_edges) == 0
+        nodes_resolved = cast(list[object], solver_node_for_id)
+        use_skill_profiles = _any_job_requires_skills(model)
+        profiles_by_skills: dict[frozenset[int], object] = {}
+        if use_skill_profiles:
+            profiles_by_skills = _build_skill_profiles(pm, model)
+
         _add_resolved_edges(
             pm,
-            cast(list[object], solver_node_for_id),
+            nodes_resolved,
             model._travel_edges,
             n_nodes,
             use_euclidean=use_euclidean,
         )
+        if use_skill_profiles:
+            blocked = int(self._options[SKILL_INCOMPATIBLE_COST])
+            _add_skill_profile_edges(
+                pm,
+                nodes_resolved,
+                model,
+                profiles_by_skills,
+                blocked_cost=blocked,
+            )
 
         for vi, vehicle in enumerate(model._vehicles):
             sd_nid = vehicle.start_depot_node_id
@@ -253,6 +339,8 @@ class PyVRPSolver(Solver):
                 extra = vehicle.max_route_overtime
                 vt_kwargs["max_overtime"] = int(extra) if extra is not None else 0
                 vt_kwargs["unit_overtime_cost"] = int(vehicle.route_overtime_unit_cost)
+            if use_skill_profiles:
+                vt_kwargs["profile"] = profiles_by_skills[vehicle.skills]
             pm.add_vehicle_type(**vt_kwargs)
 
         return pm

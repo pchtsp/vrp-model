@@ -88,7 +88,7 @@ Before solving, [`Solver.solve`](vrp_model/solvers/base.py) runs [`Model.validat
 | Job groups (mutually exclusive job alternatives) | ✓ | ✓ | ✗ | ✗ |
 | Flexible time windows (linear soft penalties via `TimeWindowFlex`) | ✗ | ✓ | ✗ | ✗ |
 | Route overtime (extra duration allowed + unit penalty on overage) | ✓ | ✓ | ✗ | ✗ |
-| Skills (jobs require a subset of vehicle skills) | ✗ | ✓ | ✓ | ✓ |
+| Skills (jobs require a subset of vehicle skills) | ✓ | ✓ | ✓ | ✓ |
 | Maximum wait / time slack at nodes (`max_slack_time` on vehicles) | ✗ | ✓ | ✗ | ✗ |
 
 **What each backend minimizes (not a `Feature` flag):** [`ORToolsSolver`](vrp_model/solvers/ortools/solver.py) minimizes total **travel distance** (arc cost from the distance matrix; time is a separate dimension). [`PyVRPSolver`](vrp_model/solvers/pyvrp/solver.py) minimizes PyVRP’s objective on the edge costs it receives as distance, with duration driving time feasibility. [`VroomSolver`](vrp_model/solvers/vroom/solver.py) passes duration and distance matrices; VROOM’s default behavior is **duration**-oriented for optimization. [`NextrouteSolver`](vrp_model/solvers/nextroute/solver.py) uses the Nextroute engine’s objective on the constructed instance.

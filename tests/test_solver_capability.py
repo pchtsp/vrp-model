@@ -23,15 +23,16 @@ except ModuleNotFoundError:
 
 
 class TestSolverCapability(unittest.TestCase):
-    def test_pyvrp_rejects_skills(self) -> None:
+    def test_pyvrp_accepts_skills(self) -> None:
         m = Model()
         d = m.add_depot(location=(0.0, 0.0))
         m.add_vehicle([10], d, skills={1})
         m.add_job(1, location=(1.0, 0.0), skills_required={1})
+        m.validate()
 
-        solver = PyVRPSolver()
-        with self.assertRaises(SolverCapabilityError):
-            solver.solve(m)
+        PyVRPSolver({"time_limit": 2.0, "msg": False}).solve(m)
+        self.assertIsNotNone(m.solution)
+        self.assertTrue(m.is_solution_feasible())
 
     @unittest.skipIf(not _ORTOOLS_INSTALLED, "ortools extra not installed")
     def test_ortools_accepts_time_windows(self) -> None:

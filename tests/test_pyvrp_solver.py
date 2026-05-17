@@ -109,6 +109,25 @@ class TestPyVRPSolver(unittest.TestCase):
         self.assertEqual(result.mapped_status.name, "FEASIBLE")
         self.assertTrue(m.is_solution_feasible())
 
+    def test_skills_routes_compatible_vehicle(self) -> None:
+        m = Model()
+        d = m.add_depot(location=(0.0, 0.0))
+        m.add_vehicle([10], d, skills={1})
+        m.add_vehicle([10], d, skills={2})
+        m.add_job(1, location=(1.0, 0.0), skills_required={1})
+        m.add_job(1, location=(2.0, 0.0), skills_required={2})
+        m.validate()
+        PyVRPSolver({"time_limit": 3.0, "msg": False}).solve(m)
+        self.assertTrue(m.is_solution_feasible())
+        for r in m.solution.routes:
+            if not r.jobs:
+                continue
+            vs = r.vehicle.skills
+            for j in r.jobs:
+                req = j.skills_required
+                if req:
+                    self.assertTrue(req <= vs)
+
     def test_route_time_overtime_pyvrp(self) -> None:
         m = Model()
         d = m.add_depot(location=(0.0, 0.0))

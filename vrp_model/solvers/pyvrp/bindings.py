@@ -33,7 +33,17 @@ class PyVRPModelLike(Protocol):
 
     def add_client(self, x: float, y: float, *args: object, **kwargs: object) -> object: ...
 
-    def add_edge(self, frm: object, to: object, distance: int, duration: int = 0) -> object: ...
+    def add_profile(self, *args: object, **kwargs: object) -> object: ...
+
+    def add_edge(
+        self,
+        frm: object,
+        to: object,
+        distance: int,
+        duration: int = 0,
+        *args: object,
+        **kwargs: object,
+    ) -> object: ...
 
     def add_vehicle_type(self, *args: object, **kwargs: object) -> object: ...
 
