@@ -42,6 +42,35 @@ class JobGroup:
         return self._model._job_groups[self._index].skip_penalty
 
 
+class PickupDelivery:
+    """View of one pickup–delivery pair stored on :class:`~vrp_model.core.model.Model`."""
+
+    __slots__ = ("_model", "_index")
+
+    def __init__(self, model: Model, index: int) -> None:
+        if index < 0 or index >= len(model._pickup_deliveries):
+            raise ValidationError("pickup-delivery index is out of range for this model")
+        self._model = model
+        self._index = index
+
+    @property
+    def index(self) -> int:
+        """Index of this pair in :attr:`~vrp_model.core.model.Model.pickup_deliveries` order."""
+        return self._index
+
+    @property
+    def pickup(self) -> Job:
+        """Pickup job view."""
+        rec = self._model._pickup_deliveries[self._index]
+        return Job(self._model, rec.pickup_job_node_id)
+
+    @property
+    def delivery(self) -> Job:
+        """Delivery job view."""
+        rec = self._model._pickup_deliveries[self._index]
+        return Job(self._model, rec.delivery_job_node_id)
+
+
 class Depot:
     """Read/write view of a depot row in :class:`~vrp_model.core.model.Model` storage."""
 

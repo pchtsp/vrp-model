@@ -52,3 +52,15 @@ def validate_travel_edges(
             raise ValidationError(f"travel edge ({i}, {j}) distance must be non-negative")
         if attrs.duration is not None and attrs.duration < 0:
             raise ValidationError(f"travel edge ({i}, {j}) duration must be non-negative")
+
+
+def validate_travel_edges_time_windows(
+    edges: TravelEdgesMap,
+) -> None:
+    """When time windows are active, every edge with distance must also set duration."""
+    for (i, j), attrs in edges.items():
+        if attrs.distance is not None and attrs.duration is None:
+            raise ValidationError(
+                f"travel edge ({i}, {j}) must set duration when distance is set and "
+                "time windows are active",
+            )

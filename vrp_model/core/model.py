@@ -25,7 +25,7 @@ from vrp_model.core.solution import Route, Solution
 from vrp_model.core.storage import normalize_load, skills_to_frozen
 from vrp_model.core.time_window_flex import TimeWindowFlex
 from vrp_model.core.travel_edges import TRAVEL_COST_INF, TravelEdgeAttrs, TravelEdgesMap
-from vrp_model.core.views import Depot, Job, JobGroup, Vehicle
+from vrp_model.core.views import Depot, Job, JobGroup, PickupDelivery, Vehicle
 from vrp_model.utils.distance import euclidean_int
 from vrp_model.validation import consistency, feasibility, structure
 
@@ -112,6 +112,11 @@ class Model:
         for i, row in enumerate(self._nodes):
             if row.kind == NodeKind.JOB:
                 yield Job(self, i)
+
+    @property
+    def travel_edges(self) -> TravelEdgesMap:
+        """Snapshot of sparse travel overrides (shallow copy; does not mutate the model)."""
+        return dict(self._travel_edges)
 
     def set_travel_edges(self, edges: TravelEdgesMap) -> None:
         """Replace sparse travel overrides; values must be :class:`TravelEdgeAttrs` instances.
@@ -264,6 +269,12 @@ class Model:
                 delivery_job_node_id=delivery.node_id,
             ),
         )
+
+    @property
+    def pickup_deliveries(self) -> Iterator[PickupDelivery]:
+        """Yield pickup–delivery pair views in registration order."""
+        for i in range(len(self._pickup_deliveries)):
+            yield PickupDelivery(self, i)
 
     def add_job_group(
         self,

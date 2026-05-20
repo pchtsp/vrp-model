@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from vrp_model.core.errors import ValidationError
 from vrp_model.core.kinds import NodeKind
-from vrp_model.core.travel_edges import validate_travel_edges
+from vrp_model.core.travel_edges import validate_travel_edges, validate_travel_edges_time_windows
 from vrp_model.validation import job_groups
 from vrp_model.validation.tags import vehicle_tag
 
@@ -57,5 +57,11 @@ def validate(model: Model) -> None:
 
     if model._travel_edges:
         validate_travel_edges(len(model._nodes), model._travel_edges)
+        from vrp_model.core.model import Feature
+
+        require_duration = Feature.TIME_WINDOWS in model.detect_features()
+        # If time windows are active, every edge with distance must also set duration.
+        if require_duration:
+            validate_travel_edges_time_windows(model._travel_edges)
 
     job_groups.validate(model)

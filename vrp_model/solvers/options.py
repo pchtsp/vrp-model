@@ -12,6 +12,12 @@ GAP_REL = "gap_rel"
 GAP_ABS = "gap_abs"
 MSG = "msg"
 LOG_PATH = "log_path"
+# When the canonical model marks an arc as unreachable (``TRAVEL_COST_INF``), solvers map it
+# to a backend-specific large cost. Set these to override that sentinel per solver run.
+MISSING_ARC_DISTANCE = "missing_arc_distance"
+MISSING_ARC_DURATION = "missing_arc_duration"
+# PyVRP: skip ``add_edge`` for arcs failing :func:`~vrp_model.solvers._helpers.should_add_explicit_edge`.
+OMIT_UNREACHABLE_ARCS = "omit_unreachable_arcs"
 
 
 class SolverOptions(TypedDict, total=False):
@@ -24,6 +30,9 @@ class SolverOptions(TypedDict, total=False):
     gap_abs: float | None
     msg: bool | None
     log_path: str | None
+    missing_arc_distance: int | None
+    missing_arc_duration: int | None
+    omit_unreachable_arcs: bool | None
 
 
 class FullSolverOptions(TypedDict):
@@ -36,6 +45,9 @@ class FullSolverOptions(TypedDict):
     gap_abs: float | None
     msg: bool
     log_path: str | None
+    missing_arc_distance: int | None
+    missing_arc_duration: int | None
+    omit_unreachable_arcs: bool
 
 
 def default_solver_options() -> dict[str, object]:
@@ -44,6 +56,11 @@ def default_solver_options() -> dict[str, object]:
     ``None`` means “leave to the solver” where applicable (gaps / iteration cap).
     ``time_limit`` is in seconds (wall-clock budget for the search loop).
     ``msg`` enables progress messages; ``log_path`` (if set) receives PyVRP progress logs.
+    ``missing_arc_distance`` / ``missing_arc_duration`` override the backend cost used when the
+    canonical model marks an arc unreachable (``TRAVEL_COST_INF``); ``None`` keeps each solver's
+    built-in default (e.g. PyVRP ``MAX_VALUE`` scale, OR-Tools transit cap, VROOM uint32 max).
+    ``omit_unreachable_arcs`` (PyVRP) skips ``add_edge`` for forbidden legs; omitted pairs use
+    PyVRP's ``missing_value`` (from ``missing_arc_*`` when set).
     """
     return {
         TIME_LIMIT: 3.0,
@@ -53,6 +70,9 @@ def default_solver_options() -> dict[str, object]:
         GAP_ABS: None,
         MSG: False,
         LOG_PATH: None,
+        MISSING_ARC_DISTANCE: None,
+        MISSING_ARC_DURATION: None,
+        OMIT_UNREACHABLE_ARCS: False,
     }
 
 
@@ -79,7 +99,16 @@ def full_solver_options_from_dict(merged: dict[str, object]) -> FullSolverOption
         gap_abs=cast(float | None, merged.get(GAP_ABS)),
         msg=bool(merged[MSG]),
         log_path=cast(str | None, merged.get(LOG_PATH)),
+        missing_arc_distance=_optional_int(merged.get(MISSING_ARC_DISTANCE)),
+        missing_arc_duration=_optional_int(merged.get(MISSING_ARC_DURATION)),
+        omit_unreachable_arcs=bool(merged.get(OMIT_UNREACHABLE_ARCS, False)),
     )
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    return int(cast(int, value))
 
 
 def merge_solver_options(

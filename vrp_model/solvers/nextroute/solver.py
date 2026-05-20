@@ -10,13 +10,13 @@ from vrp_model.core.errors import SolverNotInstalledError
 from vrp_model.core.kinds import NodeKind
 from vrp_model.core.model import Feature, Model, SolveStatus
 from vrp_model.core.solution import Route, Solution
-from vrp_model.core.travel_edges import TRAVEL_COST_INF
 from vrp_model.core.views import Depot, Job, Vehicle
 from vrp_model.solvers._helpers import (
     empty_instance_solution_status,
     job_node_ids_ordered,
     max_capacity_dims,
     pad_vec,
+    solver_travel_float,
 )
 from vrp_model.solvers.base import Solver
 from vrp_model.solvers.nextroute.bindings import (
@@ -31,7 +31,7 @@ from vrp_model.solvers.nextroute.options import (
     build_nextroute_engine_options,
     merge_nextroute_solver_options,
 )
-from vrp_model.solvers.options import TIME_LIMIT
+from vrp_model.solvers.options import MISSING_ARC_DISTANCE, MISSING_ARC_DURATION, TIME_LIMIT
 from vrp_model.solvers.status import SolutionStatus, SolverStopReason
 
 _STOP_PREFIX = "j"
@@ -68,22 +68,38 @@ def _decode_stop_id(stop_id: str) -> int | None:
     return int(tail)
 
 
-def _leg_seconds(model: Model, u: int, v: int) -> float:
+def _leg_seconds(
+    model: Model,
+    u: int,
+    v: int,
+    *,
+    missing_arc_duration: int | None,
+) -> float:
     if u == v:
         return 0.0
     raw = model._directed_travel_duration(u, v)
-    if raw >= TRAVEL_COST_INF:
-        return _MATRIX_INF
-    return float(raw)
+    return solver_travel_float(
+        raw,
+        override=missing_arc_duration,
+        backend_default=_MATRIX_INF,
+    )
 
 
-def _leg_meters(model: Model, u: int, v: int) -> float:
+def _leg_meters(
+    model: Model,
+    u: int,
+    v: int,
+    *,
+    missing_arc_distance: int | None,
+) -> float:
     if u == v:
         return 0.0
     raw = model._directed_travel_distance(u, v)
-    if raw >= TRAVEL_COST_INF:
-        return _MATRIX_INF
-    return float(raw)
+    return solver_travel_float(
+        raw,
+        override=missing_arc_distance,
+        backend_default=_MATRIX_INF,
+    )
 
 
 class NextrouteSolver(Solver):
@@ -141,8 +157,18 @@ class NextrouteSolver(Solver):
                     continue
                 u = entity_node(i)
                 v = entity_node(j)
-                dur_mat[i][j] = _leg_seconds(model, u, v)
-                dist_mat[i][j] = _leg_meters(model, u, v)
+                dur_mat[i][j] = _leg_seconds(
+                    model,
+                    u,
+                    v,
+                    missing_arc_duration=opts.get(MISSING_ARC_DURATION),
+                )
+                dist_mat[i][j] = _leg_meters(
+                    model,
+                    u,
+                    v,
+                    missing_arc_distance=opts.get(MISSING_ARC_DISTANCE),
+                )
 
         pd_pickups = {p.pickup_job_node_id for p in model._pickup_deliveries}
         precedes_map: dict[int, list[str]] = {}

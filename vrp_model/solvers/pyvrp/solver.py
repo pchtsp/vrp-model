@@ -15,12 +15,22 @@ from vrp_model.core.views import Depot, Job, Vehicle
 from vrp_model.solvers._helpers import (
     depot_node_ids_ordered,
     empty_instance_solution_status,
+    is_model_travel_inf,
     job_node_ids_ordered,
     max_capacity_dims,
     pad_vec,
+    should_add_explicit_edge,
 )
 from vrp_model.solvers.base import Solver
-from vrp_model.solvers.options import LOG_PATH, MSG, SEED, TIME_LIMIT
+from vrp_model.solvers.options import (
+    LOG_PATH,
+    MISSING_ARC_DISTANCE,
+    MISSING_ARC_DURATION,
+    MSG,
+    OMIT_UNREACHABLE_ARCS,
+    SEED,
+    TIME_LIMIT,
+)
 from vrp_model.solvers.pyvrp.bindings import (
     CAP_PAD,
     TW_LATE_DEFAULT,
@@ -102,26 +112,53 @@ def _build_skill_profiles(
     return profiles
 
 
+def _edge_component(
+    value: int | None,
+    *,
+    missing: int,
+) -> int:
+    if value is None or is_model_travel_inf(value):
+        return missing
+    return int(value)
+
+
+def _pyvrp_missing_value(opts: dict[str, object]) -> int:
+    """PyVRP ``missing_value`` for omitted edges: distance override, else duration, else sentinel."""
+    dist = opts.get(MISSING_ARC_DISTANCE)
+    if dist is not None:
+        return int(dist)
+    dur = opts.get(MISSING_ARC_DURATION)
+    if dur is not None:
+        return int(dur)
+    return TRAVEL_COST_INF
+
+
 def _add_resolved_edges(
     pm: PyVRPModelLike,
+    model: Model,
     solver_node_for_id: list[object],
     travel_edges: TravelEdgesMap,
     n: int,
     *,
     use_euclidean: bool,
+    missing_distance: int,
+    missing_duration: int,
+    omit_unreachable: bool,
 ) -> None:
     for i in range(n):
         for j in range(n):
             if i == j:
                 continue
+            if not should_add_explicit_edge(model, i, j, omit_unreachable=omit_unreachable):
+                continue
             entry = travel_edges.get((i, j))
             if entry is not None:
-                d = entry.distance if entry.distance is not None else TRAVEL_COST_INF
-                t = entry.duration if entry.duration is not None else TRAVEL_COST_INF
+                d = _edge_component(entry.distance, missing=missing_distance)
+                t = _edge_component(entry.duration, missing=missing_duration)
             elif use_euclidean:
                 d, t = _euclidean_leg(solver_node_for_id, i, j)
             else:
-                d, t = TRAVEL_COST_INF, TRAVEL_COST_INF
+                d, t = missing_distance, missing_duration
             pm.add_edge(solver_node_for_id[i], solver_node_for_id[j], d, t)
 
 
@@ -289,12 +326,20 @@ class PyVRPSolver(Solver):
         if use_skill_profiles:
             profiles_by_skills = _build_skill_profiles(pm, model)
 
+        opts = self._options
+        missing_d = int(opts.get(MISSING_ARC_DISTANCE) or TRAVEL_COST_INF)
+        missing_t = int(opts.get(MISSING_ARC_DURATION) or TRAVEL_COST_INF)
+        omit_unreachable = bool(opts.get(OMIT_UNREACHABLE_ARCS, False))
         _add_resolved_edges(
             pm,
+            model,
             nodes_resolved,
             model._travel_edges,
             n_nodes,
             use_euclidean=use_euclidean,
+            missing_distance=missing_d,
+            missing_duration=missing_t,
+            omit_unreachable=omit_unreachable,
         )
         if use_skill_profiles:
             blocked = int(self._options[SKILL_INCOMPATIBLE_COST])
@@ -368,8 +413,15 @@ class PyVRPSolver(Solver):
             progress_log.addHandler(handler)
             progress_log.setLevel(logging.INFO)
 
+        solve_kwargs: dict[str, object] = {
+            "seed": seed,
+            "display": pyvrp_display,
+        }
+        if bool(opts.get(OMIT_UNREACHABLE_ARCS, False)):
+            solve_kwargs["missing_value"] = _pyvrp_missing_value(opts)
+
         try:
-            raw = pm.solve(stop, seed=seed, display=pyvrp_display)
+            raw = pm.solve(stop, **solve_kwargs)
         finally:
             if handler is not None:
                 progress_log.removeHandler(handler)

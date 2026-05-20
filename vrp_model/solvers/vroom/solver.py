@@ -13,16 +13,16 @@ from vrp_model.core.errors import MappingError, SolverNotInstalledError
 from vrp_model.core.kinds import NodeKind
 from vrp_model.core.model import Feature, Model, SolveStatus
 from vrp_model.core.solution import Route, Solution
-from vrp_model.core.travel_edges import TRAVEL_COST_INF
 from vrp_model.core.views import Depot, Job, Vehicle
 from vrp_model.solvers._helpers import (
     empty_instance_solution_status,
     job_node_ids_ordered,
     max_capacity_dims,
     pad_vec,
+    solver_travel_int,
 )
 from vrp_model.solvers.base import Solver
-from vrp_model.solvers.options import TIME_LIMIT
+from vrp_model.solvers.options import MISSING_ARC_DISTANCE, MISSING_ARC_DURATION, TIME_LIMIT
 from vrp_model.solvers.status import SolutionStatus, SolverStopReason
 from vrp_model.solvers.vroom.bindings import VROOM_PROFILE, VROOM_UINT32_MAX, VroomInput
 from vrp_model.solvers.vroom.options import (
@@ -34,8 +34,6 @@ from vrp_model.solvers.vroom.options import (
 
 
 def _clamp_mat(value: int) -> int:
-    if value >= TRAVEL_COST_INF:
-        return VROOM_UINT32_MAX
     if value < 0:
         return 0
     return min(int(value), VROOM_UINT32_MAX)
@@ -52,7 +50,11 @@ def _uint32_matrix_for_pyvroom(mat: np.ndarray) -> np.ndarray:
     return np.require(a, dtype=np.uint32, requirements=["C"])
 
 
-def _build_duration_matrix(model: Model) -> np.ndarray:
+def _build_duration_matrix(
+    model: Model,
+    *,
+    missing_arc_duration: int | None,
+) -> np.ndarray:
     n = len(model._nodes)
     mat = np.zeros((n, n), dtype=np.uint32, order="C")
     for i in range(n):
@@ -60,11 +62,20 @@ def _build_duration_matrix(model: Model) -> np.ndarray:
             if i == j:
                 continue
             raw = model._directed_travel_duration(i, j)
-            mat[i, j] = _clamp_mat(raw)
+            mapped = solver_travel_int(
+                raw,
+                override=missing_arc_duration,
+                backend_default=VROOM_UINT32_MAX,
+            )
+            mat[i, j] = _clamp_mat(mapped)
     return _uint32_matrix_for_pyvroom(mat)
 
 
-def _build_distance_matrix(model: Model) -> np.ndarray:
+def _build_distance_matrix(
+    model: Model,
+    *,
+    missing_arc_distance: int | None,
+) -> np.ndarray:
     n = len(model._nodes)
     mat = np.zeros((n, n), dtype=np.uint32, order="C")
     for i in range(n):
@@ -72,7 +83,12 @@ def _build_distance_matrix(model: Model) -> np.ndarray:
             if i == j:
                 continue
             raw = model._directed_travel_distance(i, j)
-            mat[i, j] = _clamp_mat(raw)
+            mapped = solver_travel_int(
+                raw,
+                override=missing_arc_distance,
+                backend_default=VROOM_UINT32_MAX,
+            )
+            mat[i, j] = _clamp_mat(mapped)
     return _uint32_matrix_for_pyvroom(mat)
 
 
@@ -133,8 +149,15 @@ class VroomSolver(Solver):
         t0 = time.perf_counter()
         try:
             inp = VroomInput()
-            dur = _build_duration_matrix(model)
-            dist = _build_distance_matrix(model)
+            opts = self._options
+            dur = _build_duration_matrix(
+                model,
+                missing_arc_duration=opts.get(MISSING_ARC_DURATION),
+            )
+            dist = _build_distance_matrix(
+                model,
+                missing_arc_distance=opts.get(MISSING_ARC_DISTANCE),
+            )
             inp.set_durations_matrix(VROOM_PROFILE, dur)
             inp.set_distances_matrix(VROOM_PROFILE, dist)
         except RuntimeError as exc:

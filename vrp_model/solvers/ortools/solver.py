@@ -15,9 +15,10 @@ from vrp_model.solvers._helpers import (
     empty_instance_solution_status,
     job_node_ids_ordered,
     max_capacity_dims,
+    solver_travel_int,
 )
 from vrp_model.solvers.base import Solver
-from vrp_model.solvers.options import TIME_LIMIT
+from vrp_model.solvers.options import MISSING_ARC_DISTANCE, MISSING_ARC_DURATION, TIME_LIMIT
 from vrp_model.solvers.ortools.bindings import PyWrapCP
 from vrp_model.solvers.ortools.options import (
     FIRST_SOLUTION_STRATEGY,
@@ -41,7 +42,11 @@ def _clamp_arc(value: int) -> int:
     return int(value)
 
 
-def _build_distance_matrix(model: Model) -> list[list[int]]:
+def _build_distance_matrix(
+    model: Model,
+    *,
+    missing_arc_distance: int | None,
+) -> list[list[int]]:
     n = len(model._nodes)
     mat = [[0] * n for _ in range(n)]
     for i in range(n):
@@ -49,11 +54,20 @@ def _build_distance_matrix(model: Model) -> list[list[int]]:
             if i == j:
                 continue
             raw = model._directed_travel_distance(i, j)
-            mat[i][j] = _clamp_arc(raw)
+            mapped = solver_travel_int(
+                raw,
+                override=missing_arc_distance,
+                backend_default=ORTOOLS_TRANSIT_CAP,
+            )
+            mat[i][j] = _clamp_arc(mapped)
     return mat
 
 
-def _build_duration_leg_matrix(model: Model) -> list[list[int]]:
+def _build_duration_leg_matrix(
+    model: Model,
+    *,
+    missing_arc_duration: int | None,
+) -> list[list[int]]:
     n = len(model._nodes)
     mat = [[0] * n for _ in range(n)]
     for i in range(n):
@@ -61,7 +75,12 @@ def _build_duration_leg_matrix(model: Model) -> list[list[int]]:
             if i == j:
                 continue
             raw = model._directed_travel_duration(i, j)
-            mat[i][j] = _clamp_arc(raw)
+            mapped = solver_travel_int(
+                raw,
+                override=missing_arc_duration,
+                backend_default=ORTOOLS_TRANSIT_CAP,
+            )
+            mat[i][j] = _clamp_arc(mapped)
     return mat
 
 
@@ -259,8 +278,15 @@ class ORToolsSolver(Solver):
         manager = pywrapcp.RoutingIndexManager(n, nveh, starts, ends)
         routing = pywrapcp.RoutingModel(manager)
 
-        dist_mat = _build_distance_matrix(model)
-        leg_dur = _build_duration_leg_matrix(model)
+        opts = self._options
+        dist_mat = _build_distance_matrix(
+            model,
+            missing_arc_distance=opts.get(MISSING_ARC_DISTANCE),
+        )
+        leg_dur = _build_duration_leg_matrix(
+            model,
+            missing_arc_duration=opts.get(MISSING_ARC_DURATION),
+        )
         time_mat = _time_matrix_including_service(model, leg_dur)
         uniform = _single_depot_topology(model) and not _any_job_requires_skills(model)
 

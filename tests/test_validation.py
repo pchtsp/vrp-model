@@ -83,6 +83,16 @@ class TestTravelEdges(unittest.TestCase):
         m.validate()
         self.assertEqual(m._travel_edges[(0, j.node_id)], TravelEdgeAttrs(distance=5))
 
+    def test_time_windows_requires_duration_on_distance_edges(self) -> None:
+        m = Model()
+        d = m.add_depot()
+        m.add_vehicle([], d)
+        j = m.add_job(0, location=(0.0, 0.0), time_window=(0, 100))
+        m.update_travel_edge(d, j, distance=5)
+        with self.assertRaises(ValidationError) as ctx:
+            m.validate()
+        self.assertIn("duration", str(ctx.exception))
+
     def test_partial_override_then_validate_after_new_node(self) -> None:
         m = Model()
         d = m.add_depot()

@@ -47,7 +47,13 @@ class PyVRPModelLike(Protocol):
 
     def add_vehicle_type(self, *args: object, **kwargs: object) -> object: ...
 
-    def solve(self, stop: object, *args: object, **kwargs: object) -> object: ...
+    def solve(
+        self,
+        stop: object,
+        *args: object,
+        missing_value: int = 0,
+        **kwargs: object,
+    ) -> object: ...
 
 
 class PyVRPRouteLike(Protocol):

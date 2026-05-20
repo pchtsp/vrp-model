@@ -104,7 +104,9 @@ Before solving, [`Solver.solve`](vrp_model/solvers/base.py) runs [`Model.validat
 - If **`travel_edges`** is **empty**, leg distance and duration fall back to **integer Euclidean** distances between planar coordinates for **all** pairs (depots and jobs). Validation then requires **every job** to have a **`location`**.
 - If **`travel_edges`** is **non-empty**, the model uses **matrix-only** semantics: any directed pair not present in the map has infinite distance and duration (no Euclidean fallback for missing arcs).
 
-Use **`set_travel_edges`**, **`update_travel_edge`**, and **`clear_travel_edges`** on the model; **`validate()`** checks node ids, forbids self-loops, and rejects negative costs.
+Use **`set_travel_edges`**, **`update_travel_edge`**, and **`clear_travel_edges`** on the model; read the current map via **`model.travel_edges`** (a shallow snapshot). **`validate()`** checks node ids, forbids self-loops, and rejects negative costs. When **time windows** are active (`Feature.TIME_WINDOWS`), any stored edge with **`distance`** must also set **`duration`**. Pickup–delivery pairs are registered with **`add_pickup_delivery`** and read via **`model.pickup_deliveries`**.
+
+**PyVRP sparse arcs:** Pass **`omit_unreachable_arcs: true`** in solver options to skip **`add_edge`** for legs without usable distance, or without duration when time windows are off. Omitted pairs use PyVRP’s **`missing_value`** (from **`missing_arc_distance`**, else **`missing_arc_duration`**, else the package sentinel). Matrix solvers (OR-Tools, VROOM, Nextroute) ignore **`omit_unreachable_arcs`** and always fill dense matrices.
 
 
 ## Solving and solutions

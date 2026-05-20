@@ -3,7 +3,7 @@
 import unittest
 
 from vrp_model import Depot, Job, Model, NodeKind, ValidationError
-from vrp_model.core.records import PickupDeliveryRecord
+from vrp_model.core.travel_edges import TravelEdgeAttrs
 
 
 class TestModelViews(unittest.TestCase):
@@ -39,10 +39,22 @@ class TestModelViews(unittest.TestCase):
         p1 = m.add_job(1)
         p2 = m.add_job(1)
         m.add_pickup_delivery(p1, p2)
-        self.assertEqual(
-            m._pickup_deliveries,
-            [PickupDeliveryRecord(pickup_job_node_id=1, delivery_job_node_id=2)],
-        )
+        pairs = list(m.pickup_deliveries)
+        self.assertEqual(len(pairs), 1)
+        self.assertEqual(pairs[0].index, 0)
+        self.assertEqual(pairs[0].pickup.node_id, 1)
+        self.assertEqual(pairs[0].delivery.node_id, 2)
+
+    def test_travel_edges_getter_returns_snapshot(self) -> None:
+        m = Model()
+        d = m.add_depot(location=(0.0, 0.0))
+        j = m.add_job(1, location=(1.0, 0.0))
+        edges = {(d.node_id, j.node_id): TravelEdgeAttrs(distance=5)}
+        m.set_travel_edges(edges)
+        got = m.travel_edges
+        self.assertEqual(got, edges)
+        got[(d.node_id, j.node_id)] = TravelEdgeAttrs(distance=99)
+        self.assertEqual(m.travel_edges, edges)
 
     def test_depot_from_other_model_rejected(self) -> None:
         m1 = Model()

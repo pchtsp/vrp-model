@@ -13,13 +13,16 @@ from vrp_model.core.model import Feature, Model, SolveStatus
 from vrp_model.core.solution import Route, Solution
 from vrp_model.core.time_window_flex import TimeWindowFlex
 from vrp_model.core.travel_edges import TRAVEL_COST_INF, TravelEdgeAttrs, TravelEdgesMap
-from vrp_model.core.views import Depot, Job, JobGroup, Vehicle
+from vrp_model.core.views import Depot, Job, JobGroup, PickupDelivery, Vehicle
 from vrp_model.solvers.base import Solver
 from vrp_model.solvers.options import (
     GAP_ABS,
     GAP_REL,
     LOG_PATH,
     MAX_ITERATIONS,
+    MISSING_ARC_DISTANCE,
+    MISSING_ARC_DURATION,
+    OMIT_UNREACHABLE_ARCS,
     MSG,
     SEED,
     TIME_LIMIT,
@@ -36,6 +39,7 @@ __all__ = [
     "GAP_REL",
     "Job",
     "JobGroup",
+    "PickupDelivery",
     "LOG_PATH",
     "MappingError",
     "MSG",
@@ -50,6 +54,9 @@ __all__ = [
     "TravelEdgeAttrs",
     "TravelEdgesMap",
     "MAX_ITERATIONS",
+    "MISSING_ARC_DISTANCE",
+    "MISSING_ARC_DURATION",
+    "OMIT_UNREACHABLE_ARCS",
     "SEED",
     "Solver",
     "SolverOptions",
