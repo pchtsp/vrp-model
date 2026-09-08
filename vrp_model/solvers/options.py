@@ -16,7 +16,8 @@ LOG_PATH = "log_path"
 # to a backend-specific large cost. Set these to override that sentinel per solver run.
 MISSING_ARC_DISTANCE = "missing_arc_distance"
 MISSING_ARC_DURATION = "missing_arc_duration"
-# PyVRP: skip ``add_edge`` for arcs failing :func:`~vrp_model.solvers._helpers.should_add_explicit_edge`.
+# PyVRP: skip ``add_edge`` for arcs failing
+# :func:`~vrp_model.solvers._helpers.should_add_explicit_edge`.
 OMIT_UNREACHABLE_ARCS = "omit_unreachable_arcs"
 
 

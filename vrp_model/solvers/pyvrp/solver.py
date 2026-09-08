@@ -122,14 +122,17 @@ def _edge_component(
     return int(value)
 
 
-def _pyvrp_missing_value(opts: dict[str, object]) -> int:
-    """PyVRP ``missing_value`` for omitted edges: distance override, else duration, else sentinel."""
+def _pyvrp_missing_value(opts: PyVRPSolverOptions) -> int:
+    """PyVRP ``missing_value`` for omitted edges.
+
+    Uses distance override when set, else duration, else the canonical sentinel.
+    """
     dist = opts.get(MISSING_ARC_DISTANCE)
     if dist is not None:
-        return int(dist)
+        return dist
     dur = opts.get(MISSING_ARC_DURATION)
     if dur is not None:
-        return int(dur)
+        return dur
     return TRAVEL_COST_INF
 
 
@@ -413,15 +416,20 @@ class PyVRPSolver(Solver):
             progress_log.addHandler(handler)
             progress_log.setLevel(logging.INFO)
 
-        solve_kwargs: dict[str, object] = {
-            "seed": seed,
-            "display": pyvrp_display,
-        }
+        missing_value: int | None = None
         if bool(opts.get(OMIT_UNREACHABLE_ARCS, False)):
-            solve_kwargs["missing_value"] = _pyvrp_missing_value(opts)
+            missing_value = _pyvrp_missing_value(opts)
 
         try:
-            raw = pm.solve(stop, **solve_kwargs)
+            if missing_value is None:
+                raw = pm.solve(stop, seed=seed, display=pyvrp_display)
+            else:
+                raw = pm.solve(
+                    stop,
+                    seed=seed,
+                    display=pyvrp_display,
+                    missing_value=missing_value,
+                )
         finally:
             if handler is not None:
                 progress_log.removeHandler(handler)

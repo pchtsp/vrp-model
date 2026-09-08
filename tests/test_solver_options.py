@@ -2,9 +2,13 @@
 
 import unittest
 
+from vrp_model import Model
 from vrp_model.core.travel_edges import TRAVEL_COST_INF
-from vrp_model import Model, TravelEdgeAttrs
-from vrp_model.solvers._helpers import is_model_travel_inf, should_add_explicit_edge, solver_travel_int
+from vrp_model.solvers._helpers import (
+    is_model_travel_inf,
+    should_add_explicit_edge,
+    solver_travel_int,
+)
 from vrp_model.solvers.options import (
     GAP_ABS,
     GAP_REL,
