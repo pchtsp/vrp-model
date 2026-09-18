@@ -106,6 +106,8 @@ Before solving, [`Solver.solve`](vrp_model/solvers/base.py) runs [`Model.validat
 
 Use **`set_travel_edges`**, **`update_travel_edge`**, and **`clear_travel_edges`** on the model; read the current map via **`model.travel_edges`** (a shallow snapshot). **`validate()`** checks node ids, forbids self-loops, and rejects negative costs. When **time windows** are active (`Feature.TIME_WINDOWS`), any stored edge with **`distance`** must also set **`duration`**. Pickup–delivery pairs are registered with **`add_pickup_delivery`** and read via **`model.pickup_deliveries`**.
 
+**PyVRP pickup–delivery:** Pairs registered with **`add_pickup_delivery`** map to PyVRP **shipments** (`add_shipment`), so PyVRP itself enforces precedence and same-vehicle service; the shipment carries the pickup job’s demand (falling back to the delivery job’s when the pickup demand is all zeros), and is skippable only when **both** jobs have a `prize`.
+
 **PyVRP sparse arcs:** Pass **`omit_unreachable_arcs: true`** in solver options to skip **`add_edge`** for legs without usable distance, or without duration when time windows are off. Omitted pairs use PyVRP’s **`missing_value`** (from **`missing_arc_distance`**, else **`missing_arc_duration`**, else the package sentinel). Matrix solvers (OR-Tools, VROOM, Nextroute) ignore **`omit_unreachable_arcs`** and always fill dense matrices.
 
 

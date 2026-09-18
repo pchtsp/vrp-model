@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from vrp_model.core.kinds import NodeKind
 from vrp_model.core.model import Model, SolveStatus
+from vrp_model.core.solution import Solution
 from vrp_model.core.travel_edges import TRAVEL_COST_INF
 from vrp_model.solvers.status import SolutionStatus, SolverStopReason
+from vrp_model.validation.tags import job_tag, vehicle_tag
 
 
 def is_model_travel_inf(value: int) -> bool:
@@ -102,4 +104,34 @@ def empty_instance_solution_status(
         iterations=iterations,
         error_message=None,
         solver_status="",
+    )
+
+
+def skill_violations(model: Model, solution: Solution) -> list[tuple[int, int]]:
+    """Return ``(vehicle index, job node id)`` pairs a route serves without the required skills.
+
+    Backends that express vehicle-job compatibility as a prohibitive arc cost rather than a
+    hard constraint (PyVRP routing profiles, OR-Tools capped transits) can return a route
+    that still serves an incompatible job when no cheaper assignment exists. Callers use this
+    to downgrade such a result instead of reporting it as feasible.
+    """
+    out: list[tuple[int, int]] = []
+    for route in solution.routes:
+        vskills = model._vehicles[route.vehicle._idx].skills
+        for job in route.jobs:
+            req = model._nodes[job.node_id].as_job().skills_required
+            if req and not req <= vskills:
+                out.append((route.vehicle._idx, job.node_id))
+    return out
+
+
+def skill_violation_message(model: Model, violations: list[tuple[int, int]]) -> str:
+    """One-line summary of :func:`skill_violations` output, listing the first few pairs."""
+    shown = ", ".join(
+        f"{job_tag(model, nid)} on {vehicle_tag(model, vi)}" for vi, nid in violations[:5]
+    )
+    more = f" (+{len(violations) - 5} more)" if len(violations) > 5 else ""
+    return (
+        f"solver assigned {len(violations)} job(s) to vehicles "
+        f"lacking required skills: {shown}{more}"
     )

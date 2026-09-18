@@ -4,8 +4,17 @@ from __future__ import annotations
 
 import unittest
 
+from tests._limits import ORTOOLS_TIME_LIMIT, pyvrp_options
 from vrp_model import Model, SolverCapabilityError
-from vrp_model.solvers.pyvrp import PyVRPSolver
+
+try:
+    import pyvrp  # noqa: F401
+
+    from vrp_model.solvers.pyvrp import PyVRPSolver
+
+    _PYVRP_INSTALLED = True
+except ModuleNotFoundError:
+    _PYVRP_INSTALLED = False
 
 try:
     import ortools  # noqa: F401
@@ -18,11 +27,14 @@ try:
     import vroom  # noqa: F401
 
     from vrp_model.solvers.vroom import VroomSolver
+
+    _VROOM_INSTALLED = True
 except ModuleNotFoundError:
-    VroomSolver = None  # type: ignore[misc, assignment]
+    _VROOM_INSTALLED = False
 
 
 class TestSolverCapability(unittest.TestCase):
+    @unittest.skipIf(not _PYVRP_INSTALLED, "pyvrp extra not installed")
     def test_pyvrp_accepts_skills(self) -> None:
         m = Model()
         d = m.add_depot(location=(0.0, 0.0))
@@ -30,7 +42,7 @@ class TestSolverCapability(unittest.TestCase):
         m.add_job(1, location=(1.0, 0.0), skills_required={1})
         m.validate()
 
-        PyVRPSolver({"time_limit": 2.0, "msg": False}).solve(m)
+        PyVRPSolver(pyvrp_options()).solve(m)
         self.assertIsNotNone(m.solution)
         self.assertTrue(m.is_solution_feasible())
 
@@ -43,11 +55,11 @@ class TestSolverCapability(unittest.TestCase):
         m.add_vehicle([10], d, time_window=(0, 10_000))
         m.add_job(1, time_window=(0, 100), location=(1.0, 0.0), service_time=0)
 
-        solver = ORToolsSolver({"time_limit": 5.0})
+        solver = ORToolsSolver({"time_limit": ORTOOLS_TIME_LIMIT})
         solver.solve(m)
         self.assertIsNotNone(m.solution)
 
-    @unittest.skipIf(VroomSolver is None, "vroom extra not installed")
+    @unittest.skipIf(not _VROOM_INSTALLED, "vroom extra not installed")
     def test_vroom_rejects_job_groups(self) -> None:
         m = Model()
         d = m.add_depot(location=(0.0, 0.0))

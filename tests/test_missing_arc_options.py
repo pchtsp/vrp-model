@@ -5,7 +5,13 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
-from vrp_model import MISSING_ARC_DISTANCE, MISSING_ARC_DURATION, Model, TravelEdgeAttrs
+from vrp_model import (
+    MISSING_ARC_DISTANCE,
+    MISSING_ARC_DURATION,
+    OMIT_UNREACHABLE_ARCS,
+    Model,
+    TravelEdgeAttrs,
+)
 from vrp_model.core.travel_edges import TRAVEL_COST_INF
 from vrp_model.solvers.nextroute.solver import (
     _MATRIX_INF,
@@ -19,7 +25,14 @@ from vrp_model.solvers.ortools.solver import (
     _build_distance_matrix,
     _build_duration_leg_matrix,
 )
-from vrp_model.solvers.pyvrp.solver import PyVRPSolver, _add_resolved_edges, _pyvrp_missing_value
+from vrp_model.solvers.pyvrp.solver import PyVRPSolver, _pyvrp_missing_value
+
+try:
+    import pyvrp  # noqa: F401
+except ModuleNotFoundError:
+    _PYVRP_INSTALLED = False
+else:
+    _PYVRP_INSTALLED = True
 
 try:
     import numpy  # noqa: F401
@@ -37,8 +50,6 @@ try:
 
     _VROOM_AVAILABLE = True
 except ModuleNotFoundError:
-    VroomSolver = None  # type: ignore[misc, assignment]
-    VROOM_UINT32_MAX = 0
     _VROOM_AVAILABLE = False
 
 _CUSTOM_DISTANCE = 4_242_424
@@ -62,31 +73,6 @@ def _sparse_model_missing_arc() -> Model:
     )
     m.validate()
     return m
-
-
-class _EdgeCapture:
-    """Record PyVRP ``add_edge`` distance/duration for selected node index pairs."""
-
-    def __init__(self) -> None:
-        self.by_pair: dict[tuple[int, int], tuple[int, int]] = {}
-        self._nodes: list[object] = []
-
-    def register_nodes(self, n: int) -> list[object]:
-        self._nodes = [object() for _ in range(n)]
-        return self._nodes
-
-    def add_edge(
-        self,
-        frm: object,
-        to: object,
-        distance: int,
-        duration: int = 0,
-        *_args: object,
-        **_kwargs: object,
-    ) -> None:
-        i = self._nodes.index(frm)
-        j = self._nodes.index(to)
-        self.by_pair[(i, j)] = (int(distance), int(duration))
 
 
 class TestMissingArcOptions(unittest.TestCase):
@@ -183,66 +169,41 @@ class TestMissingArcOptions(unittest.TestCase):
         )
         self.assertEqual(default, _MATRIX_INF)
 
-    def test_pyvrp_edges_from_options_only(self) -> None:
+    @unittest.skipUnless(_PYVRP_INSTALLED, "pyvrp extra not installed")
+    def test_pyvrp_matrix_from_options_only(self) -> None:
         solver = PyVRPSolver(
             {
                 MISSING_ARC_DISTANCE: _CUSTOM_DISTANCE,
                 MISSING_ARC_DURATION: _CUSTOM_DURATION,
             },
         )
-        opts: dict[str, Any] = dict(solver._options)
-        missing_d = int(opts[MISSING_ARC_DISTANCE] or TRAVEL_COST_INF)
-        missing_t = int(opts[MISSING_ARC_DURATION] or TRAVEL_COST_INF)
-        capture = _EdgeCapture()
-        nodes = capture.register_nodes(3)
-        _add_resolved_edges(
-            capture,
-            self.model,
-            nodes,
-            self.model._travel_edges,
-            3,
-            use_euclidean=False,
-            missing_distance=missing_d,
-            missing_duration=missing_t,
-            omit_unreachable=False,
-        )
-        d, t = capture.by_pair[(_FORBIDDEN_FROM, _FORBIDDEN_TO)]
-        self.assertEqual(d, _CUSTOM_DISTANCE)
-        self.assertEqual(t, _CUSTOM_DURATION)
-        capture_default = _EdgeCapture()
-        nodes_def = capture_default.register_nodes(3)
-        _add_resolved_edges(
-            capture_default,
-            self.model,
-            nodes_def,
-            self.model._travel_edges,
-            3,
-            use_euclidean=False,
-            missing_distance=TRAVEL_COST_INF,
-            missing_duration=TRAVEL_COST_INF,
-            omit_unreachable=False,
-        )
-        d_def, t_def = capture_default.by_pair[(_FORBIDDEN_FROM, _FORBIDDEN_TO)]
-        self.assertEqual(d_def, TRAVEL_COST_INF)
-        self.assertEqual(t_def, TRAVEL_COST_INF)
+        data = solver.build_solver_model(self.model)
+        pair = (_FORBIDDEN_FROM, _FORBIDDEN_TO)
+        self.assertEqual(int(data.distance_matrix(profile=0)[pair]), _CUSTOM_DISTANCE)
+        self.assertEqual(int(data.duration_matrix(profile=0)[pair]), _CUSTOM_DURATION)
 
-    def test_pyvrp_omit_unreachable_skips_forbidden_pair(self) -> None:
-        capture = _EdgeCapture()
-        nodes = capture.register_nodes(3)
-        _add_resolved_edges(
-            capture,
-            self.model,
-            nodes,
-            self.model._travel_edges,
-            3,
-            use_euclidean=False,
-            missing_distance=TRAVEL_COST_INF,
-            missing_duration=TRAVEL_COST_INF,
-            omit_unreachable=True,
+        default = PyVRPSolver().build_solver_model(self.model)
+        self.assertEqual(int(default.distance_matrix(profile=0)[pair]), TRAVEL_COST_INF)
+        self.assertEqual(int(default.duration_matrix(profile=0)[pair]), TRAVEL_COST_INF)
+
+    @unittest.skipUnless(_PYVRP_INSTALLED, "pyvrp extra not installed")
+    def test_pyvrp_omit_unreachable_uses_single_fill_value(self) -> None:
+        """Omitted arcs take PyVRP's one fill value in both matrices, not the per-component ones."""
+        solver = PyVRPSolver(
+            {
+                OMIT_UNREACHABLE_ARCS: True,
+                MISSING_ARC_DURATION: _CUSTOM_DURATION,
+            },
         )
-        self.assertNotIn((_FORBIDDEN_FROM, _FORBIDDEN_TO), capture.by_pair)
-        self.assertIn((0, 1), capture.by_pair)
-        self.assertIn((1, 2), capture.by_pair)
+        data = solver.build_solver_model(self.model)
+        dist = data.distance_matrix(profile=0)
+        dur = data.duration_matrix(profile=0)
+        pair = (_FORBIDDEN_FROM, _FORBIDDEN_TO)
+        self.assertEqual(int(dist[pair]), _CUSTOM_DURATION)
+        self.assertEqual(int(dur[pair]), _CUSTOM_DURATION)
+        # Arcs the model does provide keep their own stored values.
+        self.assertEqual(int(dist[0, 1]), 10)
+        self.assertEqual(int(dur[0, 1]), 100)
 
     def test_pyvrp_missing_value_prefers_distance_override(self) -> None:
         opts: dict[str, object] = {

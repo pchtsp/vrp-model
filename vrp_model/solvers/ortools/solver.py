@@ -317,9 +317,9 @@ class ORToolsSolver(Solver):
             )
             routing.AddDimensionWithVehicleTransits(
                 dist_dim_cbs,
-                0,
-                horizon,
-                True,
+                0,  # slack_max
+                horizon,  # capacity
+                True,  # fix_start_cumul_to_zero
                 "Distance",
             )
             dist_dim = routing.GetDimensionOrDie("Distance")
@@ -337,11 +337,13 @@ class ORToolsSolver(Solver):
                 uniform=uniform,
             )
             slack_max = _time_slack_max(model, horizon)
+            # fix_start_cumul_to_zero must stay False: route start times are absolute
+            # clock values, so a vehicle shift may legitimately begin after time 0.
             routing.AddDimensionWithVehicleTransits(
                 time_cb_indices,
                 slack_max,
-                horizon,
-                True,
+                horizon,  # capacity
+                False,  # fix_start_cumul_to_zero
                 "Time",
             )
             time_dim = routing.GetDimensionOrDie("Time")

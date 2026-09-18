@@ -4,6 +4,12 @@ from __future__ import annotations
 
 import unittest
 
+from tests._limits import (
+    NEXTROUTE_TIME_LIMIT,
+    ORTOOLS_TIME_LIMIT,
+    VROOM_TIME_LIMIT,
+    pyvrp_options,
+)
 from tests._vroom_probe import vroom_matrix_ok
 from tests.toy_instances import TOY_CASES, ToyCase
 from vrp_model import Model
@@ -13,22 +19,28 @@ try:
     import ortools  # noqa: F401
 
     from vrp_model.solvers.ortools import ORToolsSolver
+
+    _ORTOOLS_INSTALLED = True
 except ModuleNotFoundError:
-    ORToolsSolver = None  # type: ignore[misc, assignment]
+    _ORTOOLS_INSTALLED = False
 
 try:
     import pyvrp  # noqa: F401
 
     from vrp_model.solvers.pyvrp import PyVRPSolver
+
+    _PYVRP_INSTALLED = True
 except ModuleNotFoundError:
-    PyVRPSolver = None  # type: ignore[misc, assignment]
+    _PYVRP_INSTALLED = False
 
 try:
     import vroom  # noqa: F401
 
     from vrp_model.solvers.vroom import VroomSolver
+
+    _VROOM_INSTALLED = True
 except ModuleNotFoundError:
-    VroomSolver = None  # type: ignore[misc, assignment]
+    _VROOM_INSTALLED = False
     _VROOM_MATRIX_OK = False
 else:
     _VROOM_MATRIX_OK = vroom_matrix_ok()
@@ -37,20 +49,22 @@ try:
     import nextroute  # noqa: F401
 
     from vrp_model.solvers.nextroute import NextrouteSolver
+
+    _NEXTROUTE_INSTALLED = True
 except ModuleNotFoundError:
-    NextrouteSolver = None  # type: ignore[misc, assignment]
+    _NEXTROUTE_INSTALLED = False
 
 
 def _solver_factories() -> list[tuple[str, type[Solver], dict]]:
     out: list[tuple[str, type[Solver], dict]] = []
-    if ORToolsSolver is not None:
-        out.append(("ortools", ORToolsSolver, {"time_limit": 15.0}))
-    if PyVRPSolver is not None:
-        out.append(("pyvrp", PyVRPSolver, {"time_limit": 5.0, "msg": False}))
-    if VroomSolver is not None and _VROOM_MATRIX_OK:
-        out.append(("vroom", VroomSolver, {"time_limit": 10.0}))
-    if NextrouteSolver is not None:
-        out.append(("nextroute", NextrouteSolver, {"time_limit": 15.0}))
+    if _ORTOOLS_INSTALLED:
+        out.append(("ortools", ORToolsSolver, {"time_limit": ORTOOLS_TIME_LIMIT}))
+    if _PYVRP_INSTALLED:
+        out.append(("pyvrp", PyVRPSolver, pyvrp_options()))
+    if _VROOM_INSTALLED and _VROOM_MATRIX_OK:
+        out.append(("vroom", VroomSolver, {"time_limit": VROOM_TIME_LIMIT}))
+    if _NEXTROUTE_INSTALLED:
+        out.append(("nextroute", NextrouteSolver, {"time_limit": NEXTROUTE_TIME_LIMIT}))
     return out
 
 

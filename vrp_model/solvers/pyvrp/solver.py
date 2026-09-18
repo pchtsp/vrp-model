@@ -1,16 +1,16 @@
-"""PyVRP solver: canonical model ↔ PyVRP ``Model`` in-process."""
+"""PyVRP solver: canonical model ↔ PyVRP ``ProblemData`` in-process."""
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from vrp_model.core.errors import MappingError, SolverNotInstalledError
 from vrp_model.core.kinds import NodeKind
 from vrp_model.core.model import Feature, Model, SolveStatus
 from vrp_model.core.solution import Route, Solution
-from vrp_model.core.travel_edges import TRAVEL_COST_INF, TravelEdgesMap
+from vrp_model.core.travel_edges import TRAVEL_COST_INF
 from vrp_model.core.views import Depot, Job, Vehicle
 from vrp_model.solvers._helpers import (
     depot_node_ids_ordered,
@@ -19,7 +19,8 @@ from vrp_model.solvers._helpers import (
     job_node_ids_ordered,
     max_capacity_dims,
     pad_vec,
-    should_add_explicit_edge,
+    skill_violation_message,
+    skill_violations,
 )
 from vrp_model.solvers.base import Solver
 from vrp_model.solvers.options import (
@@ -33,12 +34,20 @@ from vrp_model.solvers.options import (
 )
 from vrp_model.solvers.pyvrp.bindings import (
     CAP_PAD,
+    PYVRP_MAX_VALUE,
     TW_LATE_DEFAULT,
-    HasXY,
+    PyVRPClient,
+    PyVRPClientGroup,
+    PyVRPDataLike,
+    PyVRPDepot,
+    PyVRPLocation,
     PyVRPMaxRuntime,
-    PyVRPModel,
-    PyVRPModelLike,
+    PyVRPProblemData,
     PyVRPResultLike,
+    PyVRPShipment,
+    PyVRPSolve,
+    PyVRPVehicleType,
+    np,
 )
 from vrp_model.solvers.pyvrp.options import (
     SKILL_INCOMPATIBLE_COST,
@@ -46,9 +55,13 @@ from vrp_model.solvers.pyvrp.options import (
     merge_pyvrp_solver_options,
 )
 from vrp_model.solvers.status import SolutionStatus, SolverStopReason
-from vrp_model.utils.distance import euclidean_int
 
 _PYVRP_PROGRESS_LOGGER = "pyvrp.ProgressPrinter"
+
+Coords = tuple[float, float]
+
+# A routing profile is identified by the job skill requirements its vehicles cannot meet.
+ProfileKey = frozenset[frozenset[int]]
 
 
 def _pad_capacity(cap: list[int], dims: int) -> list[int]:
@@ -58,6 +71,36 @@ def _pad_capacity(cap: list[int], dims: int) -> list[int]:
     while len(out) < dims:
         out.append(CAP_PAD)
     return out[:dims]
+
+
+def _shipment_job_node_ids(model: Model) -> set[int]:
+    """Job node ids that PyVRP models as shipment steps rather than standalone clients."""
+    out: set[int] = set()
+    for pd in model._pickup_deliveries:
+        out.add(int(pd.pickup_job_node_id))
+        out.add(int(pd.delivery_job_node_id))
+    return out
+
+
+def _pyvrp_shipment_unified_ids(model: Model) -> list[tuple[int, int]]:
+    """Map PyVRP shipment index -> (pickup node id, delivery node id).
+
+    Order matches PyVRP: pickup-delivery pairs in registration order.
+    """
+    return [
+        (int(pd.pickup_job_node_id), int(pd.delivery_job_node_id))
+        for pd in model._pickup_deliveries
+    ]
+
+
+def _pyvrp_client_unified_ids(model: Model) -> list[int]:
+    """Map PyVRP client index -> unified node id.
+
+    Order matches PyVRP: jobs (ascending node id) that are not part of a pickup-delivery
+    pair, since paired jobs become shipments instead.
+    """
+    shipment_ids = _shipment_job_node_ids(model)
+    return [i for i in job_node_ids_ordered(model) if i not in shipment_ids]
 
 
 def _pyvrp_location_unified_ids(model: Model) -> list[int]:
@@ -76,56 +119,82 @@ def _export_name(label: str | None, idx: int, prefix: str) -> str:
     return f"{prefix}_{idx}"
 
 
-def _coords(node: object) -> tuple[float, float]:
-    n = cast(HasXY, node)
-    return (float(n.x), float(n.y))
+# ---------------------------------------------------------------------------------------
+# Routing profiles for vehicle-job compatibility
+# ---------------------------------------------------------------------------------------
 
 
-def _euclidean_leg(solver_node_for_id: list[object], i: int, j: int) -> tuple[int, int]:
-    dist = euclidean_int(_coords(solver_node_for_id[i]), _coords(solver_node_for_id[j]))
-    return dist, dist
+def _distinct_job_requirements(model: Model) -> list[frozenset[int]]:
+    """The distinct non-empty ``skills_required`` sets that jobs ask for."""
+    seen = {
+        row.as_job().skills_required
+        for row in model._nodes
+        if row.kind == NodeKind.JOB and row.as_job().skills_required
+    }
+    return sorted(seen, key=sorted)
 
 
-def _any_job_requires_skills(model: Model) -> bool:
-    for row in model._nodes:
-        if row.kind == NodeKind.JOB and bool(row.as_job().skills_required):
-            return True
-    return False
-
-
-def _profile_name_for_skills(skills: frozenset[int]) -> str:
-    if not skills:
-        return "skills_none"
-    return "skills_" + "_".join(str(s) for s in sorted(skills))
-
-
-def _build_skill_profiles(
-    pm: PyVRPModelLike,
+def _assign_profiles(
     model: Model,
-) -> dict[frozenset[int], object]:
-    """One PyVRP routing profile per unique vehicle skill set."""
-    profiles: dict[frozenset[int], object] = {}
+    requirements: list[frozenset[int]],
+) -> tuple[list[ProfileKey], list[int]]:
+    """Return the profile keys in matrix order, plus each vehicle's profile index.
+
+    A profile is keyed by what its vehicles *cannot* serve rather than by their skill set,
+    so vehicles whose skills differ only in ways no job asks about collapse onto one
+    profile, and every vehicle able to serve the whole instance lands on the unrestricted
+    profile -- which needs no blocked arcs and can share the base matrices outright. PyVRP
+    carries two full ``n x n`` int64 matrices per profile, so this keying matters.
+    """
+    order: list[ProfileKey] = []
+    index: dict[ProfileKey, int] = {}
+    per_vehicle: list[int] = []
     for veh in model._vehicles:
-        sk = veh.skills
-        if sk not in profiles:
-            profiles[sk] = pm.add_profile(name=_profile_name_for_skills(sk))
-    return profiles
+        key: ProfileKey = frozenset(req for req in requirements if not req <= veh.skills)
+        pos = index.get(key)
+        if pos is None:
+            pos = len(order)
+            index[key] = pos
+            order.append(key)
+        per_vehicle.append(pos)
+    return order, per_vehicle
 
 
-def _edge_component(
-    value: int | None,
-    *,
-    missing: int,
-) -> int:
+def _blocked_location_indices(
+    model: Model,
+    blocked: ProfileKey,
+    loc_of: list[int],
+) -> list[int]:
+    """Location indices of the jobs a profile's vehicles may not serve."""
+    return [
+        loc_of[i]
+        for i, row in enumerate(model._nodes)
+        if row.kind == NodeKind.JOB and row.as_job().skills_required in blocked
+    ]
+
+
+# ---------------------------------------------------------------------------------------
+# Travel matrices
+# ---------------------------------------------------------------------------------------
+
+
+def _edge_component(value: int | None, *, missing: int) -> int:
     if value is None or is_model_travel_inf(value):
         return missing
     return int(value)
 
 
-def _pyvrp_missing_value(opts: PyVRPSolverOptions) -> int:
-    """PyVRP ``missing_value`` for omitted edges.
+def _edge_is_reachable(distance: int | None, duration: int | None) -> bool:
+    """Mirror of ``should_add_explicit_edge`` for one stored travel edge."""
+    if distance is None or is_model_travel_inf(distance):
+        return False
+    return duration is not None and not is_model_travel_inf(duration)
 
-    Uses distance override when set, else duration, else the canonical sentinel.
+
+def _pyvrp_missing_value(opts: PyVRPSolverOptions) -> int:
+    """PyVRP fill value for omitted arcs.
+
+    Uses the distance override when set, else duration, else the canonical sentinel.
     """
     dist = opts.get(MISSING_ARC_DISTANCE)
     if dist is not None:
@@ -136,73 +205,94 @@ def _pyvrp_missing_value(opts: PyVRPSolverOptions) -> int:
     return TRAVEL_COST_INF
 
 
-def _add_resolved_edges(
-    pm: PyVRPModelLike,
+def _euclidean_matrices(coords_by_loc: list[Coords]) -> tuple[Any, Any]:
+    """Rounded Euclidean distance/duration matrices over location coordinates."""
+    xy = np.asarray(coords_by_loc, dtype=np.float64)
+    dx = xy[:, 0, None] - xy[None, :, 0]
+    dy = xy[:, 1, None] - xy[None, :, 1]
+    dist = np.rint(np.hypot(dx, dy)).astype(np.int64)
+    np.fill_diagonal(dist, 0)
+    return dist, dist.copy()
+
+
+def _base_matrices(
     model: Model,
-    solver_node_for_id: list[object],
-    travel_edges: TravelEdgesMap,
-    n: int,
+    loc_of: list[int],
+    coords_by_loc: list[Coords],
     *,
-    use_euclidean: bool,
     missing_distance: int,
     missing_duration: int,
     omit_unreachable: bool,
-) -> None:
-    for i in range(n):
-        for j in range(n):
-            if i == j:
-                continue
-            if not should_add_explicit_edge(model, i, j, omit_unreachable=omit_unreachable):
-                continue
-            entry = travel_edges.get((i, j))
-            if entry is not None:
-                d = _edge_component(entry.distance, missing=missing_distance)
-                t = _edge_component(entry.duration, missing=missing_duration)
-            elif use_euclidean:
-                d, t = _euclidean_leg(solver_node_for_id, i, j)
-            else:
-                d, t = missing_distance, missing_duration
-            pm.add_edge(solver_node_for_id[i], solver_node_for_id[j], d, t)
+    fill_value: int,
+) -> tuple[Any, Any]:
+    """Build the distance/duration matrices shared by every routing profile.
+
+    Indices are PyVRP location indices: depots (ascending node id), then jobs. Arcs the
+    model leaves unreachable get ``missing_distance``/``missing_duration``, or -- when
+    ``omit_unreachable`` is set -- the single ``fill_value`` PyVRP uses for absent edges.
+    """
+    n = len(coords_by_loc)
+
+    if not model._travel_edges:
+        dist, dur = _euclidean_matrices(coords_by_loc)
+        if omit_unreachable:
+            unreachable = dist >= TRAVEL_COST_INF
+            dist[unreachable] = fill_value
+            dur[unreachable] = fill_value
+        return dist, dur
+
+    base_d = fill_value if omit_unreachable else missing_distance
+    base_t = fill_value if omit_unreachable else missing_duration
+    dist = np.full((n, n), base_d, np.int64)
+    dur = np.full((n, n), base_t, np.int64)
+    for (i, j), attrs in model._travel_edges.items():
+        if omit_unreachable and not _edge_is_reachable(attrs.distance, attrs.duration):
+            continue
+        li = loc_of[i]
+        lj = loc_of[j]
+        dist[li, lj] = _edge_component(attrs.distance, missing=missing_distance)
+        dur[li, lj] = _edge_component(attrs.duration, missing=missing_duration)
+    np.fill_diagonal(dist, 0)
+    np.fill_diagonal(dur, 0)
+    return dist, dur
 
 
-def _add_skill_profile_edges(
-    pm: PyVRPModelLike,
-    solver_node_for_id: list[object],
+def _profile_matrices(
     model: Model,
-    profiles_by_skills: dict[frozenset[int], object],
+    profile_keys: list[ProfileKey],
+    loc_of: list[int],
+    base_dist: Any,
+    base_dur: Any,
     *,
     blocked_cost: int,
-) -> None:
-    """Profile-specific overrides: prohibit arcs into jobs a profile's vehicles cannot serve."""
-    n_nodes = len(model._nodes)
-    location_nodes: list[object] = []
-    for i in range(n_nodes):
-        sn = solver_node_for_id[i]
-        if sn is not None:
-            location_nodes.append(sn)
+) -> tuple[list[Any], list[Any]]:
+    """One distance/duration matrix pair per profile, with incompatible jobs priced out.
 
-    for vskills, profile in profiles_by_skills.items():
-        for j in range(n_nodes):
-            row = model._nodes[j]
-            if row.kind != NodeKind.JOB:
-                continue
-            req = row.as_job().skills_required
-            if not req or req <= vskills:
-                continue
-            to_obj = solver_node_for_id[j]
-            if to_obj is None:
-                msg = "internal error: job node missing PyVRP object for skill edges"
-                raise RuntimeError(msg)
-            for frm in location_nodes:
-                if frm is to_obj:
-                    continue
-                pm.add_edge(
-                    frm,
-                    to_obj,
-                    blocked_cost,
-                    blocked_cost,
-                    profile=profile,
-                )
+    Blocking a whole column prohibits every arc *into* a job the profile's vehicles cannot
+    serve, which is enough to keep it out of their routes. The unrestricted profile reuses
+    the base matrices rather than copying them.
+    """
+    if not profile_keys:
+        return [base_dist], [base_dur]
+
+    distances: list[Any] = []
+    durations: list[Any] = []
+    for blocked in profile_keys:
+        if not blocked:
+            distances.append(base_dist)
+            durations.append(base_dur)
+            continue
+        cols = _blocked_location_indices(model, blocked, loc_of)
+        prof_dist = base_dist.copy()
+        prof_dur = base_dur.copy()
+        prof_dist[:, cols] = blocked_cost
+        prof_dur[:, cols] = blocked_cost
+        # Column blocking also hits the diagonal, which PyVRP expects to stay zero.
+        prof_dist[cols, cols] = 0
+        prof_dur[cols, cols] = 0
+        distances.append(prof_dist)
+        durations.append(prof_dur)
+    return distances, durations
 
 
 class PyVRPSolver(Solver):
@@ -227,70 +317,72 @@ class PyVRPSolver(Solver):
     def __init__(self, options: dict | None = None) -> None:
         self._options: PyVRPSolverOptions = merge_pyvrp_solver_options(options)
 
-    def build_solver_model(self, model: Model) -> PyVRPModelLike:
-        """Build PyVRP model from canonical ``model``. Read-only on ``self``."""
-        pmc = PyVRPModel
-        if pmc is None:
+    def build_solver_model(self, model: Model) -> PyVRPDataLike:
+        """Build PyVRP ``ProblemData`` from canonical ``model``. Read-only on ``self``.
+
+        PyVRP's ``Model`` builder is bypassed on purpose: it holds one Python ``Edge`` object
+        per arc and per profile override before flattening them into the dense matrices that
+        ``ProblemData`` actually wants. Writing those matrices directly keeps the build
+        vectorised, which matters most for profile blocking.
+        """
+        if PyVRPProblemData is None:
             raise SolverNotInstalledError('install the "pyvrp" extra to use PyVRPSolver')
 
         dims = max_capacity_dims(model, min_dims=1)
-        pickup_ids = {pd.pickup_job_node_id for pd in model._pickup_deliveries}
-        delivery_ids = {pd.delivery_job_node_id for pd in model._pickup_deliveries}
+        opts = self._options
 
-        pm = cast(PyVRPModelLike, pmc())
+        depot_ids = depot_node_ids_ordered(model)
+        job_ids = job_node_ids_ordered(model)
+        n_nodes = len(model._nodes)
+
+        # PyVRP 0.14 separates locations from the depots/clients/shipments placed on them.
+        # Locations are created depots-first, then jobs, matching
+        # ``_pyvrp_location_unified_ids``; matrix indices are these location indices.
+        loc_of: list[int] = [-1] * n_nodes
+        coords_by_loc: list[Coords] = []
+        locations: list[object] = []
         syn_i = 0
 
-        def xy_for_row(loc: tuple[float, float] | None) -> tuple[float, float]:
-            nonlocal syn_i
-            if loc is not None:
-                return (float(loc[0]), float(loc[1]))
-            p = (float(syn_i), 0.0)
-            syn_i += 1
-            return p
+        for prefix, node_ids in (("depot", depot_ids), ("job", job_ids)):
+            for i in node_ids:
+                row = model._nodes[i]
+                if row.location is not None:
+                    xy: Coords = (float(row.location[0]), float(row.location[1]))
+                else:
+                    xy = (float(syn_i), 0.0)
+                    syn_i += 1
+                loc_of[i] = len(locations)
+                coords_by_loc.append(xy)
+                locations.append(
+                    PyVRPLocation(xy[0], xy[1], name=_export_name(row.label, i, prefix)),
+                )
 
-        n_nodes = len(model._nodes)
-        solver_node_for_id: list[object | None] = [None] * n_nodes
+        depots = [
+            PyVRPDepot(loc_of[i], name=_export_name(model._nodes[i].label, i, "depot"))
+            for i in depot_ids
+        ]
+        depot_pos = {nid: k for k, nid in enumerate(depot_ids)}
 
-        pyvrp_group_for_job: dict[int, object] = {}
-        for grec in model._job_groups:
-            cg = pm.add_client_group(required=grec.skip_penalty is None)
+        group_of_job: dict[int, int] = {}
+        for gi, grec in enumerate(model._job_groups):
             for nid in grec.member_job_node_ids:
-                pyvrp_group_for_job[int(nid)] = cg
+                group_of_job[int(nid)] = gi
+        group_members: list[list[int]] = [[] for _ in model._job_groups]
 
-        for i in range(n_nodes):
-            row = model._nodes[i]
-            if row.kind != NodeKind.DEPOT:
+        shipment_ids = _shipment_job_node_ids(model)
+        clients: list[object] = []
+        for i in job_ids:
+            if i in shipment_ids:
                 continue
-            x, y = xy_for_row(row.location)
-            name = _export_name(row.label, i, "depot")
-            d_obj = pm.add_depot(x, y, name=name)
-            solver_node_for_id[i] = d_obj
-
-        for i in range(n_nodes):
-            row = model._nodes[i]
-            if row.kind != NodeKind.JOB:
-                continue
-            job = row.as_job()
-            dem = pad_vec(job.demand, dims)
-            if i in pickup_ids:
-                delivery: list[int] = [0] * dims
-                pickup = dem
-            elif i in delivery_ids:
-                delivery = dem
-                pickup = [0] * dims
-            else:
-                delivery = dem
-                pickup = [0] * dims
-
-            x, y = xy_for_row(job.location)
+            job = model._nodes[i].as_job()
             tw = job.time_window
-            tw_early = int(tw[0]) if tw is not None else 0
-            tw_late = int(tw[1]) if tw is not None else TW_LATE_DEFAULT
-            grp = pyvrp_group_for_job.get(i)
-            if grp is not None:
+            group_idx = group_of_job.get(i)
+            if group_idx is not None:
+                # The group decides whether the job is served, so the client itself is
+                # optional and carries no prize of its own.
                 prize = 0
                 required = False
-                client_kw: dict[str, object] = {"group": grp}
+                group_members[group_idx].append(len(clients))
             else:
                 prize_raw = job.prize
                 if prize_raw is not None:
@@ -299,84 +391,105 @@ class PyVRPSolver(Solver):
                 else:
                     prize = 0
                     required = True
-                client_kw = {}
 
-            name = _export_name(job.label, i, "job")
-            c_obj = pm.add_client(
-                x,
-                y,
-                delivery=delivery,
-                pickup=pickup,
-                service_duration=int(job.service_time),
-                tw_early=tw_early,
-                tw_late=tw_late,
-                prize=prize,
-                required=required,
-                name=name,
-                **client_kw,
+            clients.append(
+                PyVRPClient(
+                    loc_of[i],
+                    delivery=pad_vec(job.demand, dims),
+                    pickup=[0] * dims,
+                    service_duration=int(job.service_time),
+                    tw_early=int(tw[0]) if tw is not None else 0,
+                    tw_late=int(tw[1]) if tw is not None else TW_LATE_DEFAULT,
+                    prize=prize,
+                    required=required,
+                    group=group_idx,
+                    name=_export_name(job.label, i, "job"),
+                ),
             )
-            solver_node_for_id[i] = c_obj
 
-        nodes_for_edges: list[object] = [sn for sn in solver_node_for_id if sn is not None]
-        if len(nodes_for_edges) != n_nodes:
-            msg = "internal error: missing PyVRP node for some model node"
-            raise RuntimeError(msg)
+        groups = [
+            PyVRPClientGroup(clients=members, required=grec.skip_penalty is None)
+            for grec, members in zip(model._job_groups, group_members, strict=True)
+        ]
 
-        use_euclidean = len(model._travel_edges) == 0
-        nodes_resolved = cast(list[object], solver_node_for_id)
-        use_skill_profiles = _any_job_requires_skills(model)
-        profiles_by_skills: dict[frozenset[int], object] = {}
-        if use_skill_profiles:
-            profiles_by_skills = _build_skill_profiles(pm, model)
+        # Pickup-delivery pairs are shipments in PyVRP 0.14: one load moved between two
+        # locations, which enforces precedence and same-vehicle service.
+        shipments: list[object] = []
+        for pu_id, dl_id in _pyvrp_shipment_unified_ids(model):
+            pickup = model._nodes[pu_id].as_job()
+            delivery = model._nodes[dl_id].as_job()
+            amount = pad_vec(pickup.demand, dims)
+            if not any(amount):
+                amount = pad_vec(delivery.demand, dims)
+            pu_tw = pickup.time_window
+            dl_tw = delivery.time_window
+            prizes = [j.prize for j in (pickup, delivery)]
+            # A pair may only be skipped when both of its jobs are optional; see
+            # ``Model._pickup_delivery_pairs_valid``.
+            required = any(p is None for p in prizes)
+            prize = 0 if required else sum(int(round(float(p))) for p in prizes if p is not None)
+            pu_name = _export_name(pickup.label, pu_id, "job")
+            dl_name = _export_name(delivery.label, dl_id, "job")
+            shipments.append(
+                PyVRPShipment(
+                    loc_of[pu_id],
+                    loc_of[dl_id],
+                    pickup_tw_early=int(pu_tw[0]) if pu_tw is not None else 0,
+                    pickup_tw_late=int(pu_tw[1]) if pu_tw is not None else TW_LATE_DEFAULT,
+                    pickup_service_duration=int(pickup.service_time),
+                    delivery_tw_early=int(dl_tw[0]) if dl_tw is not None else 0,
+                    delivery_tw_late=int(dl_tw[1]) if dl_tw is not None else TW_LATE_DEFAULT,
+                    delivery_service_duration=int(delivery.service_time),
+                    amount=amount,
+                    prize=prize,
+                    required=required,
+                    name=f"{pu_name}->{dl_name}",
+                ),
+            )
 
-        opts = self._options
         missing_d = int(opts.get(MISSING_ARC_DISTANCE) or TRAVEL_COST_INF)
         missing_t = int(opts.get(MISSING_ARC_DURATION) or TRAVEL_COST_INF)
         omit_unreachable = bool(opts.get(OMIT_UNREACHABLE_ARCS, False))
-        _add_resolved_edges(
-            pm,
+        base_dist, base_dur = _base_matrices(
             model,
-            nodes_resolved,
-            model._travel_edges,
-            n_nodes,
-            use_euclidean=use_euclidean,
+            loc_of,
+            coords_by_loc,
             missing_distance=missing_d,
             missing_duration=missing_t,
             omit_unreachable=omit_unreachable,
+            fill_value=min(_pyvrp_missing_value(opts), PYVRP_MAX_VALUE),
         )
-        if use_skill_profiles:
-            blocked = int(self._options[SKILL_INCOMPATIBLE_COST])
-            _add_skill_profile_edges(
-                pm,
-                nodes_resolved,
-                model,
-                profiles_by_skills,
-                blocked_cost=blocked,
-            )
 
+        requirements = _distinct_job_requirements(model)
+        profile_keys, profile_of_vehicle = _assign_profiles(model, requirements)
+        distances, durations = _profile_matrices(
+            model,
+            profile_keys,
+            loc_of,
+            base_dist,
+            base_dur,
+            blocked_cost=min(int(opts[SKILL_INCOMPATIBLE_COST]), PYVRP_MAX_VALUE),
+        )
+
+        vehicle_types: list[object] = []
         for vi, vehicle in enumerate(model._vehicles):
             sd_nid = vehicle.start_depot_node_id
             end_nid_raw = vehicle.end_depot_node_id
             ed_nid = end_nid_raw if end_nid_raw is not None else sd_nid
-            sd_obj = solver_node_for_id[sd_nid]
-            ed_obj = solver_node_for_id[ed_nid]
-            if sd_obj is None or ed_obj is None:
+            if sd_nid not in depot_pos or ed_nid not in depot_pos:
                 msg = "internal error: vehicle depot node missing PyVRP object"
                 raise RuntimeError(msg)
-            cap = _pad_capacity(vehicle.capacity, dims)
             vtw = vehicle.time_window
-            tw_early = int(vtw[0]) if vtw is not None else 0
-            tw_late = int(vtw[1]) if vtw is not None else TW_LATE_DEFAULT
-            vname = _export_name(vehicle.label, vi, "vehicle")
             vt_kwargs: dict[str, object] = {
                 "num_available": 1,
-                "capacity": cap,
-                "start_depot": sd_obj,
-                "end_depot": ed_obj,
+                "capacity": _pad_capacity(vehicle.capacity, dims),
+                "start_depot": depot_pos[sd_nid],
+                "end_depot": depot_pos[ed_nid],
                 "fixed_cost": int(vehicle.fixed_use_cost),
-                "tw_early": tw_early,
-                "tw_late": tw_late,
-                "name": vname,
+                "tw_early": int(vtw[0]) if vtw is not None else 0,
+                "tw_late": int(vtw[1]) if vtw is not None else TW_LATE_DEFAULT,
+                "profile": profile_of_vehicle[vi],
+                "name": _export_name(vehicle.label, vi, "vehicle"),
             }
             mrd = vehicle.max_route_distance
             if mrd is not None:
@@ -387,15 +500,25 @@ class PyVRPSolver(Solver):
                 extra = vehicle.max_route_overtime
                 vt_kwargs["max_overtime"] = int(extra) if extra is not None else 0
                 vt_kwargs["unit_overtime_cost"] = int(vehicle.route_overtime_unit_cost)
-            if use_skill_profiles:
-                vt_kwargs["profile"] = profiles_by_skills[vehicle.skills]
-            pm.add_vehicle_type(**vt_kwargs)
+            vehicle_types.append(PyVRPVehicleType(**vt_kwargs))
 
-        return pm
+        return cast(
+            PyVRPDataLike,
+            PyVRPProblemData(
+                locations,
+                clients,
+                depots,
+                vehicle_types,
+                distances,
+                durations,
+                groups,
+                shipments,
+            ),
+        )
 
-    def call_solver(self, pm: PyVRPModelLike) -> PyVRPResultLike:
+    def call_solver(self, data: PyVRPDataLike) -> PyVRPResultLike:
         """Run PyVRP search using ``self._options`` (set in ``__init__``)."""
-        if PyVRPMaxRuntime is None:
+        if PyVRPMaxRuntime is None or PyVRPSolve is None:
             raise SolverNotInstalledError('install the "pyvrp" extra to use PyVRPSolver')
 
         opts = self._options
@@ -416,20 +539,8 @@ class PyVRPSolver(Solver):
             progress_log.addHandler(handler)
             progress_log.setLevel(logging.INFO)
 
-        missing_value: int | None = None
-        if bool(opts.get(OMIT_UNREACHABLE_ARCS, False)):
-            missing_value = _pyvrp_missing_value(opts)
-
         try:
-            if missing_value is None:
-                raw = pm.solve(stop, seed=seed, display=pyvrp_display)
-            else:
-                raw = pm.solve(
-                    stop,
-                    seed=seed,
-                    display=pyvrp_display,
-                    missing_value=missing_value,
-                )
+            raw = PyVRPSolve(data, stop, seed=seed, display=pyvrp_display)
         finally:
             if handler is not None:
                 progress_log.removeHandler(handler)
@@ -443,9 +554,14 @@ class PyVRPSolver(Solver):
         routes_out: list[Route] = []
 
         depot_ids = depot_node_ids_ordered(model)
-        loc_order = _pyvrp_location_unified_ids(model)
+        client_ids = _pyvrp_client_unified_ids(model)
+        shipment_ids = _pyvrp_shipment_unified_ids(model)
         n_depot_py = len(depot_ids)
-        n_locs = len(loc_order)
+
+        def lookup(seq: list[int] | list[tuple[int, int]], idx: int, what: str) -> object:
+            if idx < 0 or idx >= len(seq):
+                raise MappingError(f"{what} index {idx!r} out of range in PyVRP solution")
+            return seq[idx]
 
         for rt in best.routes():
             vidx = rt.vehicle_type()
@@ -459,24 +575,25 @@ class PyVRPSolver(Solver):
             if edi < 0 or edi >= n_depot_py:
                 raise MappingError("end_depot index out of range in PyVRP solution")
 
-            start_unified = depot_ids[sdi]
-            end_unified = depot_ids[edi]
-
+            # PyVRP 0.14 reports routes as activity schedules: depot stops plus client and
+            # shipment pickup/delivery steps, each indexing its own model collection.
             job_seq: list[Job] = []
-            for visit in rt.visits():
-                if visit < 0 or visit >= n_locs:
-                    raise MappingError(f"visit location index {visit!r} out of range")
-                uid = loc_order[visit]
-                row = model._nodes[uid]
-                if row.kind != NodeKind.JOB:
+            for act in rt.schedule():
+                if act.is_client():
+                    uid = cast(int, lookup(client_ids, act.idx, "client"))
+                elif act.is_pickup():
+                    uid = cast(tuple[int, int], lookup(shipment_ids, act.idx, "shipment"))[0]
+                elif act.is_delivery():
+                    uid = cast(tuple[int, int], lookup(shipment_ids, act.idx, "shipment"))[1]
+                else:
                     continue
                 job_seq.append(Job(model, uid))
 
             routes_out.append(
                 Route(
                     vehicle=Vehicle(model, vidx),
-                    start_depot=Depot(model, start_unified),
-                    end_depot=Depot(model, end_unified),
+                    start_depot=Depot(model, depot_ids[sdi]),
+                    end_depot=Depot(model, depot_ids[edi]),
                     jobs=job_seq,
                 ),
             )
@@ -489,20 +606,29 @@ class PyVRPSolver(Solver):
             model._solution = Solution(routes=[])
             return empty_instance_solution_status(self.name, iterations=0)
 
-        if PyVRPModel is None or PyVRPMaxRuntime is None:
+        if PyVRPProblemData is None or PyVRPMaxRuntime is None:
             raise SolverNotInstalledError('install the "pyvrp" extra to use PyVRPSolver')
 
-        pm = self.build_solver_model(model)
-        result = self.call_solver(pm)
+        data = self.build_solver_model(model)
+        result = self.call_solver(data)
         best = result.best
-        raw_status = SolveStatus.FEASIBLE if best.is_feasible() else SolveStatus.INFEASIBLE
-        model._solution = self.find_solution_values(model, result)
+        solution = self.find_solution_values(model, result)
+        model._solution = solution
+
+        # Profile blocking prices incompatible arcs out of the objective but does not forbid
+        # them, so PyVRP can report a "feasible" route that still serves a job its vehicle
+        # lacks the skills for. Check explicitly rather than pass that off as feasible.
+        violations = skill_violations(model, solution)
+        feasible = best.is_feasible() and not violations
+        raw_status = SolveStatus.FEASIBLE if feasible else SolveStatus.INFEASIBLE
 
         tl = float(self._options[TIME_LIMIT])
         elapsed = float(result.runtime)
-        if elapsed + 1e-6 >= tl:
+        if violations:
+            stop_reason = SolverStopReason.INFEASIBLE
+        elif elapsed + 1e-6 >= tl:
             stop_reason = SolverStopReason.TIME_LIMIT
-        elif best.is_feasible():
+        elif feasible:
             stop_reason = SolverStopReason.COMPLETED
         else:
             stop_reason = SolverStopReason.INFEASIBLE
@@ -516,6 +642,6 @@ class PyVRPSolver(Solver):
             stop_reason=stop_reason,
             solution_found=True,
             iterations=int(result.num_iterations),
-            error_message=None,
+            error_message=skill_violation_message(model, violations) if violations else None,
             solver_status=result.summary(),
         )

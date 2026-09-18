@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 
+from tests._limits import ORTOOLS_TIME_LIMIT, pyvrp_options
 from vrp_model import Model, ValidationError
 
 
@@ -72,18 +73,22 @@ try:
     import ortools  # noqa: F401
 
     from vrp_model.solvers.ortools import ORToolsSolver
+
+    _ORTOOLS_INSTALLED = True
 except ModuleNotFoundError:
-    ORToolsSolver = None  # type: ignore[misc, assignment]
+    _ORTOOLS_INSTALLED = False
 
 try:
     import pyvrp  # noqa: F401
 
     from vrp_model.solvers.pyvrp import PyVRPSolver
+
+    _PYVRP_INSTALLED = True
 except ModuleNotFoundError:
-    PyVRPSolver = None  # type: ignore[misc, assignment]
+    _PYVRP_INSTALLED = False
 
 
-@unittest.skipIf(PyVRPSolver is None, "pyvrp extra not installed")
+@unittest.skipIf(not _PYVRP_INSTALLED, "pyvrp extra not installed")
 class TestJobGroupPyVRP(unittest.TestCase):
     def test_mandatory_group_one_of_two(self) -> None:
         m = Model()
@@ -93,7 +98,7 @@ class TestJobGroupPyVRP(unittest.TestCase):
         b = m.add_job(1, location=(4.0, 0.0))
         m.add_job_group([a, b])
         m.validate()
-        PyVRPSolver({"time_limit": 3.0, "msg": False}).solve(m)
+        PyVRPSolver(pyvrp_options()).solve(m)
         sol = m.solution
         assert sol is not None
         visited = {j.node_id for rt in sol.routes for j in rt.jobs}
@@ -109,7 +114,7 @@ class TestJobGroupPyVRP(unittest.TestCase):
         c = m.add_job(1, location=(3.0, 4.0))
         m.add_job_group([a, b, c])
         m.validate()
-        PyVRPSolver({"time_limit": 3.0, "msg": False}).solve(m)
+        PyVRPSolver(pyvrp_options()).solve(m)
         sol = m.solution
         assert sol is not None
         group_ids = {a.node_id, b.node_id, c.node_id}
@@ -125,7 +130,7 @@ class TestJobGroupPyVRP(unittest.TestCase):
         y = m.add_job(1, location=(8.0, 3.0))
         m.add_job_group([x, y], skip_penalty=40)
         m.validate()
-        PyVRPSolver({"time_limit": 3.0, "msg": False}).solve(m)
+        PyVRPSolver(pyvrp_options()).solve(m)
         sol = m.solution
         assert sol is not None
         visits = [j.node_id for rt in sol.routes for j in rt.jobs]
@@ -142,7 +147,7 @@ class TestJobGroupPyVRP(unittest.TestCase):
         m.add_job_group([a, b], skip_penalty=50)
         j = m.add_job(1, location=(1.0, 0.0))
         m.validate()
-        PyVRPSolver({"time_limit": 3.0, "msg": False}).solve(m)
+        PyVRPSolver(pyvrp_options()).solve(m)
         sol = m.solution
         assert sol is not None
         visited = {x.node_id for rt in sol.routes for x in rt.jobs}
@@ -157,7 +162,7 @@ class TestJobGroupPyVRP(unittest.TestCase):
         alt_b = m.add_job(2, location=(12.0, 0.0))
         m.add_job_group([alt_a, alt_b])
         m.validate()
-        PyVRPSolver({"time_limit": 3.0, "msg": False}).solve(m)
+        PyVRPSolver(pyvrp_options()).solve(m)
         sol = m.solution
         assert sol is not None
         visited = {j.node_id for rt in sol.routes for j in rt.jobs}
@@ -166,7 +171,7 @@ class TestJobGroupPyVRP(unittest.TestCase):
         self.assertTrue(m.is_solution_feasible())
 
 
-@unittest.skipIf(ORToolsSolver is None, "ortools extra not installed")
+@unittest.skipIf(not _ORTOOLS_INSTALLED, "ortools extra not installed")
 class TestJobGroupORTools(unittest.TestCase):
     def test_mandatory_group_one_of_two(self) -> None:
         m = Model()
@@ -176,7 +181,7 @@ class TestJobGroupORTools(unittest.TestCase):
         b = m.add_job(1, location=(4.0, 0.0))
         m.add_job_group([a, b])
         m.validate()
-        ORToolsSolver({"time_limit": 5.0}).solve(m)
+        ORToolsSolver({"time_limit": ORTOOLS_TIME_LIMIT}).solve(m)
         sol = m.solution
         assert sol is not None
         visited = {j.node_id for rt in sol.routes for j in rt.jobs}
@@ -192,7 +197,7 @@ class TestJobGroupORTools(unittest.TestCase):
         c = m.add_job(1, location=(3.0, 4.0))
         m.add_job_group([a, b, c])
         m.validate()
-        ORToolsSolver({"time_limit": 5.0}).solve(m)
+        ORToolsSolver({"time_limit": ORTOOLS_TIME_LIMIT}).solve(m)
         sol = m.solution
         assert sol is not None
         group_ids = {a.node_id, b.node_id, c.node_id}
@@ -208,7 +213,7 @@ class TestJobGroupORTools(unittest.TestCase):
         y = m.add_job(1, location=(8.0, 3.0))
         m.add_job_group([x, y], skip_penalty=40)
         m.validate()
-        ORToolsSolver({"time_limit": 5.0}).solve(m)
+        ORToolsSolver({"time_limit": ORTOOLS_TIME_LIMIT}).solve(m)
         sol = m.solution
         assert sol is not None
         visits = [j.node_id for rt in sol.routes for j in rt.jobs]
@@ -225,7 +230,7 @@ class TestJobGroupORTools(unittest.TestCase):
         m.add_job_group([a, b], skip_penalty=60)
         j = m.add_job(1, location=(1.0, 0.0))
         m.validate()
-        ORToolsSolver({"time_limit": 5.0}).solve(m)
+        ORToolsSolver({"time_limit": ORTOOLS_TIME_LIMIT}).solve(m)
         sol = m.solution
         assert sol is not None
         visited = {x.node_id for rt in sol.routes for x in rt.jobs}
@@ -240,7 +245,7 @@ class TestJobGroupORTools(unittest.TestCase):
         alt_b = m.add_job(2, location=(12.0, 0.0))
         m.add_job_group([alt_a, alt_b])
         m.validate()
-        ORToolsSolver({"time_limit": 5.0}).solve(m)
+        ORToolsSolver({"time_limit": ORTOOLS_TIME_LIMIT}).solve(m)
         sol = m.solution
         assert sol is not None
         visited = {j.node_id for rt in sol.routes for j in rt.jobs}

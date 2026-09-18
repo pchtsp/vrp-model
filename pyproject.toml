@@ -7,7 +7,7 @@ requires-python = ">=3.11"
 dependencies = ["vrplib>=2.0.2"]
 
 [project.optional-dependencies]
-pyvrp = ["pyvrp>=0.13.3"]
+pyvrp = ["pyvrp>=0.14.0"]
 ortools = ["ortools>=9.10"]
 vroom = ["pyvroom>=1.14", "numpy>=1.26", "pandas>=2.0"]
 nextroute = ["nextroute>=1.0"]
