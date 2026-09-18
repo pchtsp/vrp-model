@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import os
 import unittest
 
 from tests._limits import ORTOOLS_TIME_LIMIT
@@ -16,6 +18,68 @@ except ModuleNotFoundError:
     _ORTOOLS_INSTALLED = False
 else:
     _ORTOOLS_INSTALLED = True
+
+
+@contextlib.contextmanager
+def _capture_fd(fd: int):
+    """Capture OS-level output on ``fd``.
+
+    OR-Tools' ``log_search`` writes through absl logging straight to the C++ file
+    descriptor, so redirecting Python's ``sys.stdout``/``sys.stderr`` objects (e.g.
+    ``contextlib.redirect_stdout``) does not see it. Only an fd-level ``dup2`` does.
+    """
+    read_fd, write_fd = os.pipe()
+    saved_fd = os.dup(fd)
+    os.dup2(write_fd, fd)
+    os.close(write_fd)
+    captured = bytearray()
+    try:
+        yield captured
+    finally:
+        os.dup2(saved_fd, fd)
+        os.close(saved_fd)
+        while True:
+            chunk = os.read(read_fd, 65536)
+            if not chunk:
+                break
+            captured.extend(chunk)
+        os.close(read_fd)
+
+
+@unittest.skipIf(not _ORTOOLS_INSTALLED, "ortools extra not installed")
+class TestORToolsSolverMsgOption(unittest.TestCase):
+    """Regression test: ``msg=True`` must make OR-Tools print its search log.
+
+    ``ORToolsSolver`` used to ignore the ``msg`` option entirely (unlike the PyVRP
+    backend), so ``--quiet``/``msg`` toggles had no effect and OR-Tools solves ran
+    completely silent. The fix sets ``RoutingSearchParameters.log_search``.
+    """
+
+    def test_msg_true_emits_search_log(self) -> None:
+        m = Model()
+        d = m.add_depot(location=(0.0, 0.0))
+        m.add_vehicle([10], d)
+        m.add_job(1, location=(1.0, 0.0), label="a")
+        m.validate()
+
+        with _capture_fd(2) as captured:
+            ORToolsSolver({"time_limit": ORTOOLS_TIME_LIMIT, "msg": True}).solve(m)
+
+        output = bytes(captured).decode(errors="replace")
+        self.assertIn("search.cc", output)
+
+    def test_msg_false_is_silent(self) -> None:
+        m = Model()
+        d = m.add_depot(location=(0.0, 0.0))
+        m.add_vehicle([10], d)
+        m.add_job(1, location=(1.0, 0.0), label="a")
+        m.validate()
+
+        with _capture_fd(2) as captured:
+            ORToolsSolver({"time_limit": ORTOOLS_TIME_LIMIT, "msg": False}).solve(m)
+
+        output = bytes(captured).decode(errors="replace")
+        self.assertNotIn("search.cc", output)
 
 
 @unittest.skipIf(not _ORTOOLS_INSTALLED, "ortools extra not installed")

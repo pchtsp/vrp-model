@@ -18,7 +18,7 @@ from vrp_model.solvers._helpers import (
     solver_travel_int,
 )
 from vrp_model.solvers.base import Solver
-from vrp_model.solvers.options import MISSING_ARC_DISTANCE, MISSING_ARC_DURATION, TIME_LIMIT
+from vrp_model.solvers.options import MISSING_ARC_DISTANCE, MISSING_ARC_DURATION, MSG, TIME_LIMIT
 from vrp_model.solvers.ortools.bindings import PyWrapCP
 from vrp_model.solvers.ortools.options import (
     FIRST_SOLUTION_STRATEGY,
@@ -492,6 +492,9 @@ class ORToolsSolver(Solver):
         ls = opts[LOCAL_SEARCH_METAHEURISTIC]
         if isinstance(ls, int):
             params.local_search_metaheuristic = ls
+
+        if opts[MSG]:
+            params.log_search = True
 
         assignment = routing.SolveWithParameters(params)
         elapsed = time.perf_counter() - t0
