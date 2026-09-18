@@ -246,6 +246,7 @@ class ORToolsSolver(Solver):
             Feature.ROUTE_OVERTIME,
             Feature.MAX_NODE_SLACK,
             Feature.JOB_GROUPS,
+            Feature.JOB_COMPATIBILITY,
         },
     )
 
@@ -479,6 +480,26 @@ class ORToolsSolver(Solver):
             pu = manager.NodeToIndex(pd.pickup_job_node_id)
             dl = manager.NodeToIndex(pd.delivery_job_node_id)
             routing.AddPickupAndDelivery(pu, dl)
+
+        if model._job_type_incompatibilities:
+            # OR-Tools sizes internal vectors by the largest type id, so remap to dense ids.
+            dense: dict[int, int] = {}
+            for a, b in model._job_type_incompatibilities:
+                dense.setdefault(a, len(dense))
+                dense.setdefault(b, len(dense))
+            for node_id, row in enumerate(model._nodes):
+                if row.kind != NodeKind.JOB:
+                    continue
+                t = row.as_job().job_type
+                if t is None:
+                    continue
+                routing.SetVisitType(
+                    manager.NodeToIndex(node_id),
+                    dense.setdefault(t, len(dense)),
+                    pywrapcp.RoutingModel.TYPE_ADDED_TO_VEHICLE,
+                )
+            for a, b in model._job_type_incompatibilities:
+                routing.AddHardTypeIncompatibility(dense[a], dense[b])
 
         params = pywrapcp.DefaultRoutingSearchParameters()
         opts = self._options

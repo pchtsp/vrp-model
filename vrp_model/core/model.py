@@ -67,6 +67,7 @@ class Feature(Enum):
     ROUTE_OVERTIME = auto()
     MAX_NODE_SLACK = auto()
     JOB_GROUPS = auto()
+    JOB_COMPATIBILITY = auto()
 
 
 class Model:
@@ -77,6 +78,7 @@ class Model:
         "_vehicles",
         "_pickup_deliveries",
         "_job_groups",
+        "_job_type_incompatibilities",
         "_solution",
         "_travel_edges",
     )
@@ -86,6 +88,7 @@ class Model:
         self._vehicles: list[VehicleRecord] = []
         self._pickup_deliveries: list[PickupDeliveryRecord] = []
         self._job_groups: list[JobGroupRecord] = []
+        self._job_type_incompatibilities: list[tuple[int, int]] = []
         self._solution: Solution | None = None
         self._travel_edges: TravelEdgesMap = {}
 
@@ -230,11 +233,15 @@ class Model:
         time_window_flex: TimeWindowFlex | None = None,
         skills_required: set[int] | frozenset[int] | None = None,
         prize: float | None = None,
+        job_type: int | None = None,
     ) -> Job:
         """Append a job node and return its view.
 
         ``skills_required`` are non-negative integer ids; at least one vehicle must
         include every required id in its ``skills`` set.
+
+        ``job_type`` is an optional non-negative integer; jobs whose types are declared
+        incompatible via :meth:`add_job_type_incompatibility` never share a route.
 
         ``prize``: when ``None`` the job is **mandatory** (must appear in any feasible
         solution). When set, the job is **optional** for hard feasibility; skipping it
@@ -255,6 +262,7 @@ class Model:
             skills_required=skills_to_frozen(skills_required or frozenset()),
             prize=prize,
             time_window_flex=time_window_flex,
+            job_type=job_type,
         )
         self._nodes.append(row)
         return Job(self, len(self._nodes) - 1)
@@ -314,6 +322,18 @@ class Model:
             if nid in g.member_job_node_ids:
                 return i
         return None
+
+    def add_job_type_incompatibility(self, type1: int, type2: int) -> None:
+        """Forbid jobs of ``type1`` and jobs of ``type2`` from sharing a route.
+
+        Types are the ``job_type`` values set on jobs. Semantic checks run in :meth:`validate`.
+        """
+        self._job_type_incompatibilities.append((int(type1), int(type2)))
+
+    @property
+    def job_type_incompatibilities(self) -> list[tuple[int, int]]:
+        """Registered incompatible ``(type1, type2)`` pairs (copy)."""
+        return list(self._job_type_incompatibilities)
 
     def validate(self) -> None:
         """Run structure, consistency, and feasibility checks (may normalize travel edges)."""
@@ -384,6 +404,9 @@ class Model:
 
         if self._job_groups:
             features.add(Feature.JOB_GROUPS)
+
+        if self._job_type_incompatibilities:
+            features.add(Feature.JOB_COMPATIBILITY)
 
         return frozenset(features)
 
@@ -543,6 +566,16 @@ class Model:
                     return False
         return True
 
+    def _job_compatibility_ok(self, sol: Solution) -> bool:
+        if not self._job_type_incompatibilities:
+            return True
+        for route in sol.routes:
+            types = {self._job_record(j.node_id).job_type for j in route.jobs}
+            for a, b in self._job_type_incompatibilities:
+                if a in types and b in types:
+                    return False
+        return True
+
     def _mandatory_jobs_each_visited_once(self, visit_by_node: dict[int, int]) -> bool:
         grouped = self._grouped_job_node_ids()
         for node_id, row in enumerate(self._nodes):
@@ -611,7 +644,7 @@ class Model:
         return True
 
     def is_solution_feasible(self) -> bool:
-        """Hard feasibility only (mandatory coverage, depots, capacity, PD, skills, caps, TW).
+        """Hard feasibility (coverage, depots, capacity, PD, skills, job types, caps, TW).
 
         Optional jobs (``prize is not None``) need not be visited. Soft time-window
         violations and priced overtime within allowed caps are **not** failures here.
@@ -626,6 +659,8 @@ class Model:
         if not self._mandatory_jobs_each_visited_once(visit_by_node):
             return False
         if not self._job_group_coverage_ok(visit_by_node):
+            return False
+        if not self._job_compatibility_ok(sol):
             return False
         if not self._visit_count_keys_are_job_nodes(visit_by_node):
             return False

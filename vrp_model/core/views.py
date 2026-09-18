@@ -325,6 +325,14 @@ class Job:
         self._job_row().skills_required = skills_to_frozen(value)
 
     @property
+    def job_type(self) -> int | None:
+        return self._job_row().job_type
+
+    @job_type.setter
+    def job_type(self, value: int | None) -> None:
+        self._job_row().job_type = value
+
+    @property
     def prize(self) -> float | None:
         return self._job_row().prize
 

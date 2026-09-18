@@ -40,6 +40,7 @@ class JobNodeRecord(NodeBase):
     skills_required: frozenset[int]
     prize: float | None = None
     time_window_flex: TimeWindowFlex | None = None
+    job_type: int | None = None
 
     def as_job(self) -> JobNodeRecord:
         return self

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from vrp_model.core.errors import ValidationError
 from vrp_model.core.kinds import NodeKind
 from vrp_model.core.travel_edges import validate_travel_edges, validate_travel_edges_time_windows
-from vrp_model.validation import job_groups
+from vrp_model.validation import job_compatibility, job_groups
 from vrp_model.validation.tags import vehicle_tag
 
 if TYPE_CHECKING:
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 def validate(model: Model) -> None:
-    """Check vehicle depot indices, pickup–delivery references, travel edges, and job groups."""
+    """Check depot indices, pickup–delivery references, travel edges, job groups, job types."""
     n_nodes = len(model._nodes)
 
     for vi, v in enumerate(model._vehicles):
@@ -65,3 +65,4 @@ def validate(model: Model) -> None:
             validate_travel_edges_time_windows(model._travel_edges)
 
     job_groups.validate(model)
+    job_compatibility.validate(model)

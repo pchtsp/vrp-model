@@ -64,7 +64,7 @@ Placeholder packages under `vrp_model/solvers/` (e.g. jsprit, vrpy) are **not** 
 
 ### What is modeled (VRP in this package)
 
-Vehicle routing here means assigning jobs to vehicles (routes), respecting travel between unified **node ids** (depots and jobs), optional **capacity** dimensions, **time** logic (service durations, windows, and caps), **pickup–delivery** pairs, **job groups** (mutually exclusive alternatives via [`add_job_group`](vrp_model/core/model.py)), depot topology, and fleet diversity. The canonical [`Model`](vrp_model/core/model.py) holds jobs, vehicles, optional pickup–delivery links, and sparse **travel** overrides; [`Feature`](vrp_model/core/model.py) summarizes which constraint families appear so solvers can declare compatibility.
+Vehicle routing here means assigning jobs to vehicles (routes), respecting travel between unified **node ids** (depots and jobs), optional **capacity** dimensions, **time** logic (service durations, windows, and caps), **pickup–delivery** pairs, **job groups** (mutually exclusive alternatives via [`add_job_group`](vrp_model/core/model.py)), **job compatibility** (a `job_type` per job plus incompatible type pairs via [`add_job_type_incompatibility`](vrp_model/core/model.py); incompatible types never share a route), depot topology, and fleet diversity. The canonical [`Model`](vrp_model/core/model.py) holds jobs, vehicles, optional pickup–delivery links, and sparse **travel** overrides; [`Feature`](vrp_model/core/model.py) summarizes which constraint families appear so solvers can declare compatibility.
 
 **Detection vs. adapters.** [`Model.detect_features()`](vrp_model/core/model.py) sets [`Feature`](vrp_model/core/model.py) from stored fields (e.g. any positive demand or non-empty vehicle capacity → `CAPACITY`; job or vehicle time windows → `TIME_WINDOWS`; soft penalties in [`TimeWindowFlex`](vrp_model/core/time_window_flex.py) → `FLEXIBLE_TIME_WINDOWS`). Other behavior—**service times**, Euclidean vs matrix travel, **primary optimization emphasis** (distance vs duration)—is not a `Feature` flag but is still passed through each solver adapter where the backend supports it.
 
@@ -86,6 +86,7 @@ Before solving, [`Solver.solve`](vrp_model/solvers/base.py) runs [`Model.validat
 | Maximum route duration / shift length per vehicle | ✓ | ✓ | ✓ | ✓ |
 | Optional jobs / prize-collecting (mandatory vs skip penalty via `prize`) | ✓ | ✓ | ✗ | ✗ |
 | Job groups (mutually exclusive job alternatives) | ✓ | ✓ | ✗ | ✗ |
+| Job compatibility (jobs of incompatible `job_type`s never share a route) | ✗ | ✓ | ✗ | ✗ |
 | Flexible time windows (linear soft penalties via `TimeWindowFlex`) | ✗ | ✓ | ✗ | ✗ |
 | Route overtime (extra duration allowed + unit penalty on overage) | ✓ | ✓ | ✗ | ✗ |
 | Skills (jobs require a subset of vehicle skills) | ✓ | ✓ | ✓ | ✓ |
