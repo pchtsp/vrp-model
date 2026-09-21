@@ -109,7 +109,7 @@ Use **`set_travel_edges`**, **`update_travel_edge`**, and **`clear_travel_edges`
 
 **PyVRP pickup–delivery:** Pairs registered with **`add_pickup_delivery`** map to PyVRP **shipments** (`add_shipment`), so PyVRP itself enforces precedence and same-vehicle service; the shipment carries the pickup job’s demand (falling back to the delivery job’s when the pickup demand is all zeros), and is skippable only when **both** jobs have a `prize`.
 
-**PyVRP sparse arcs:** Pass **`omit_unreachable_arcs: true`** in solver options to skip **`add_edge`** for legs without usable distance, or without duration when time windows are off. Omitted pairs use PyVRP’s **`missing_value`** (from **`missing_arc_distance`**, else **`missing_arc_duration`**, else the package sentinel). Matrix solvers (OR-Tools, VROOM, Nextroute) ignore **`omit_unreachable_arcs`** and always fill dense matrices.
+**PyVRP forbidden arcs:** Each PyVRP matrix fills forbidden arcs on its own. The distance matrix uses **`missing_arc_distance`** and the duration matrix uses **`missing_arc_duration`**. When an override is unset, arcs the model can't reach fall back to the package sentinel, and arcs into jobs a vehicle lacks the skills for fall back to **`skill_incompatible_cost`**. All values are capped at PyVRP’s maximum. By default, an edge with only one finite component keeps that component. Pass **`omit_unreachable_arcs: true`** to fill the whole edge instead. Matrix solvers (OR-Tools, VROOM, Nextroute) ignore **`omit_unreachable_arcs`**.
 
 
 ## Solving and solutions

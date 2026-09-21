@@ -245,6 +245,36 @@ class TestPyVRPSkillProfiles(unittest.TestCase):
         self.assertEqual(int(blocked[0, 1]), int(allowed[0, 1]))  # compatible job untouched
         self.assertNotEqual(int(allowed[0, 2]), PYVRP_MAX_VALUE)
 
+    @staticmethod
+    def _one_blocked_job_model() -> Model:
+        """Vehicle 0 cannot serve node 2 (location index 2); vehicle 1 can."""
+        m = Model()
+        d = m.add_depot(location=(0.0, 0.0))
+        m.add_vehicle([10], d, skills={1})
+        m.add_vehicle([10], d, skills={1, 2})
+        m.add_job(1, location=(1.0, 0.0), skills_required={1})
+        m.add_job(1, location=(2.0, 0.0), skills_required={2})
+        m.validate()
+        return m
+
+    def test_blocked_arcs_use_missing_arc_overrides_per_matrix(self) -> None:
+        opts = pyvrp_options(
+            missing_arc_distance=1_111,
+            missing_arc_duration=2_222,
+            skill_incompatible_cost=9_999,
+        )
+        data = PyVRPSolver(opts).build_solver_model(self._one_blocked_job_model())
+        restricted = data.vehicle_type(0).profile
+        self.assertEqual(int(data.distance_matrix(profile=restricted)[0, 2]), 1_111)
+        self.assertEqual(int(data.duration_matrix(profile=restricted)[0, 2]), 2_222)
+
+    def test_blocked_arcs_fall_back_to_skill_incompatible_cost(self) -> None:
+        opts = pyvrp_options(skill_incompatible_cost=9_999)
+        data = PyVRPSolver(opts).build_solver_model(self._one_blocked_job_model())
+        restricted = data.vehicle_type(0).profile
+        self.assertEqual(int(data.distance_matrix(profile=restricted)[0, 2]), 9_999)
+        self.assertEqual(int(data.duration_matrix(profile=restricted)[0, 2]), 9_999)
+
     def test_solution_respects_skills(self) -> None:
         m = Model()
         d = m.add_depot(location=(0.0, 0.0))

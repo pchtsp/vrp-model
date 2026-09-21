@@ -25,7 +25,7 @@ from vrp_model.solvers.ortools.solver import (
     _build_distance_matrix,
     _build_duration_leg_matrix,
 )
-from vrp_model.solvers.pyvrp.solver import PyVRPSolver, _pyvrp_missing_value
+from vrp_model.solvers.pyvrp.solver import PyVRPSolver
 
 try:
     import pyvrp  # noqa: F401
@@ -187,8 +187,8 @@ class TestMissingArcOptions(unittest.TestCase):
         self.assertEqual(int(default.duration_matrix(profile=0)[pair]), TRAVEL_COST_INF)
 
     @unittest.skipUnless(_PYVRP_INSTALLED, "pyvrp extra not installed")
-    def test_pyvrp_omit_unreachable_uses_single_fill_value(self) -> None:
-        """Omitted arcs take PyVRP's one fill value in both matrices, not the per-component ones."""
+    def test_pyvrp_omit_unreachable_fills_per_component(self) -> None:
+        """Each matrix takes its own override; an unset one falls back to the sentinel."""
         solver = PyVRPSolver(
             {
                 OMIT_UNREACHABLE_ARCS: True,
@@ -199,18 +199,11 @@ class TestMissingArcOptions(unittest.TestCase):
         dist = data.distance_matrix(profile=0)
         dur = data.duration_matrix(profile=0)
         pair = (_FORBIDDEN_FROM, _FORBIDDEN_TO)
-        self.assertEqual(int(dist[pair]), _CUSTOM_DURATION)
+        self.assertEqual(int(dist[pair]), TRAVEL_COST_INF)
         self.assertEqual(int(dur[pair]), _CUSTOM_DURATION)
         # Arcs the model does provide keep their own stored values.
         self.assertEqual(int(dist[0, 1]), 10)
         self.assertEqual(int(dur[0, 1]), 100)
-
-    def test_pyvrp_missing_value_prefers_distance_override(self) -> None:
-        opts: dict[str, object] = {
-            MISSING_ARC_DISTANCE: _CUSTOM_DISTANCE,
-            MISSING_ARC_DURATION: _CUSTOM_DURATION,
-        }
-        self.assertEqual(_pyvrp_missing_value(opts), _CUSTOM_DISTANCE)
 
 
 if __name__ == "__main__":

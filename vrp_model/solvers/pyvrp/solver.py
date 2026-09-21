@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -191,18 +192,22 @@ def _edge_is_reachable(distance: int | None, duration: int | None) -> bool:
     return duration is not None and not is_model_travel_inf(duration)
 
 
-def _pyvrp_missing_value(opts: PyVRPSolverOptions) -> int:
-    """PyVRP fill value for omitted arcs.
+@dataclass(frozen=True)
+class _ArcFill:
+    """Values written into the distance / duration matrices for an arc PyVRP must avoid."""
 
-    Uses the distance override when set, else duration, else the canonical sentinel.
-    """
-    dist = opts.get(MISSING_ARC_DISTANCE)
-    if dist is not None:
-        return dist
-    dur = opts.get(MISSING_ARC_DURATION)
-    if dur is not None:
-        return dur
-    return TRAVEL_COST_INF
+    distance: int
+    duration: int
+
+
+def _arc_fill(opts: PyVRPSolverOptions, fallback: int) -> _ArcFill:
+    """Per-matrix ``MISSING_ARC_*`` override when set, else ``fallback``; capped for PyVRP."""
+
+    def pick(key: str) -> int:
+        value = opts.get(key)
+        return min(int(cast(int, value) if value is not None else fallback), PYVRP_MAX_VALUE)
+
+    return _ArcFill(pick(MISSING_ARC_DISTANCE), pick(MISSING_ARC_DURATION))
 
 
 def _euclidean_matrices(coords_by_loc: list[Coords]) -> tuple[Any, Any]:
@@ -219,17 +224,16 @@ def _base_matrices(
     model: Model,
     loc_of: list[int],
     coords_by_loc: list[Coords],
+    fill: _ArcFill,
     *,
-    missing_distance: int,
-    missing_duration: int,
     omit_unreachable: bool,
-    fill_value: int,
 ) -> tuple[Any, Any]:
     """Build the distance/duration matrices shared by every routing profile.
 
     Indices are PyVRP location indices: depots (ascending node id), then jobs. Arcs the
-    model leaves unreachable get ``missing_distance``/``missing_duration``, or -- when
-    ``omit_unreachable`` is set -- the single ``fill_value`` PyVRP uses for absent edges.
+    model leaves unreachable get ``fill.distance`` / ``fill.duration``. With
+    ``omit_unreachable``, an edge missing either component is dropped whole, so its finite
+    half is filled too.
     """
     n = len(coords_by_loc)
 
@@ -237,21 +241,19 @@ def _base_matrices(
         dist, dur = _euclidean_matrices(coords_by_loc)
         if omit_unreachable:
             unreachable = dist >= TRAVEL_COST_INF
-            dist[unreachable] = fill_value
-            dur[unreachable] = fill_value
+            dist[unreachable] = fill.distance
+            dur[unreachable] = fill.duration
         return dist, dur
 
-    base_d = fill_value if omit_unreachable else missing_distance
-    base_t = fill_value if omit_unreachable else missing_duration
-    dist = np.full((n, n), base_d, np.int64)
-    dur = np.full((n, n), base_t, np.int64)
+    dist = np.full((n, n), fill.distance, np.int64)
+    dur = np.full((n, n), fill.duration, np.int64)
     for (i, j), attrs in model._travel_edges.items():
         if omit_unreachable and not _edge_is_reachable(attrs.distance, attrs.duration):
             continue
         li = loc_of[i]
         lj = loc_of[j]
-        dist[li, lj] = _edge_component(attrs.distance, missing=missing_distance)
-        dur[li, lj] = _edge_component(attrs.duration, missing=missing_duration)
+        dist[li, lj] = _edge_component(attrs.distance, missing=fill.distance)
+        dur[li, lj] = _edge_component(attrs.duration, missing=fill.duration)
     np.fill_diagonal(dist, 0)
     np.fill_diagonal(dur, 0)
     return dist, dur
@@ -263,8 +265,7 @@ def _profile_matrices(
     loc_of: list[int],
     base_dist: Any,
     base_dur: Any,
-    *,
-    blocked_cost: int,
+    blocked: _ArcFill,
 ) -> tuple[list[Any], list[Any]]:
     """One distance/duration matrix pair per profile, with incompatible jobs priced out.
 
@@ -277,16 +278,16 @@ def _profile_matrices(
 
     distances: list[Any] = []
     durations: list[Any] = []
-    for blocked in profile_keys:
-        if not blocked:
+    for key in profile_keys:
+        if not key:
             distances.append(base_dist)
             durations.append(base_dur)
             continue
-        cols = _blocked_location_indices(model, blocked, loc_of)
+        cols = _blocked_location_indices(model, key, loc_of)
         prof_dist = base_dist.copy()
         prof_dur = base_dur.copy()
-        prof_dist[:, cols] = blocked_cost
-        prof_dur[:, cols] = blocked_cost
+        prof_dist[:, cols] = blocked.distance
+        prof_dur[:, cols] = blocked.duration
         # Column blocking also hits the diagonal, which PyVRP expects to stay zero.
         prof_dist[cols, cols] = 0
         prof_dur[cols, cols] = 0
@@ -447,17 +448,16 @@ class PyVRPSolver(Solver):
                 ),
             )
 
-        missing_d = int(opts.get(MISSING_ARC_DISTANCE) or TRAVEL_COST_INF)
-        missing_t = int(opts.get(MISSING_ARC_DURATION) or TRAVEL_COST_INF)
-        omit_unreachable = bool(opts.get(OMIT_UNREACHABLE_ARCS, False))
+        # Unreachable and skill-blocked arcs share the per-matrix overrides; only their
+        # fallback differs.
+        missing = _arc_fill(opts, TRAVEL_COST_INF)
+        blocked = _arc_fill(opts, int(opts[SKILL_INCOMPATIBLE_COST]))
         base_dist, base_dur = _base_matrices(
             model,
             loc_of,
             coords_by_loc,
-            missing_distance=missing_d,
-            missing_duration=missing_t,
-            omit_unreachable=omit_unreachable,
-            fill_value=min(_pyvrp_missing_value(opts), PYVRP_MAX_VALUE),
+            missing,
+            omit_unreachable=bool(opts[OMIT_UNREACHABLE_ARCS]),
         )
 
         requirements = _distinct_job_requirements(model)
@@ -468,7 +468,7 @@ class PyVRPSolver(Solver):
             loc_of,
             base_dist,
             base_dur,
-            blocked_cost=min(int(opts[SKILL_INCOMPATIBLE_COST]), PYVRP_MAX_VALUE),
+            blocked,
         )
 
         vehicle_types: list[object] = []

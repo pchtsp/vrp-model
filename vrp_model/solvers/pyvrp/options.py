@@ -12,7 +12,8 @@ from vrp_model.solvers.options import (
     merge_option_layers,
 )
 
-# PyVRP-only: cost for profile-specific edges into jobs a vehicle cannot serve.
+# PyVRP-only: cost for profile-specific edges into jobs a vehicle cannot serve. Used only in
+# the matrices whose ``missing_arc_distance`` / ``missing_arc_duration`` override is unset.
 SKILL_INCOMPATIBLE_COST = "skill_incompatible_cost"
 
 

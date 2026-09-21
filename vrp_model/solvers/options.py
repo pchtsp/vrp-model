@@ -16,8 +16,8 @@ LOG_PATH = "log_path"
 # to a backend-specific large cost. Set these to override that sentinel per solver run.
 MISSING_ARC_DISTANCE = "missing_arc_distance"
 MISSING_ARC_DURATION = "missing_arc_duration"
-# PyVRP: skip ``add_edge`` for arcs failing
-# :func:`~vrp_model.solvers._helpers.should_add_explicit_edge`.
+# PyVRP: drop arcs failing :func:`~vrp_model.solvers._helpers.should_add_explicit_edge`
+# whole, rather than keeping their finite component.
 OMIT_UNREACHABLE_ARCS = "omit_unreachable_arcs"
 
 
@@ -60,8 +60,8 @@ def default_solver_options() -> dict[str, object]:
     ``missing_arc_distance`` / ``missing_arc_duration`` override the backend cost used when the
     canonical model marks an arc unreachable (``TRAVEL_COST_INF``); ``None`` keeps each solver's
     built-in default (e.g. PyVRP ``MAX_VALUE`` scale, OR-Tools transit cap, VROOM uint32 max).
-    ``omit_unreachable_arcs`` (PyVRP) skips ``add_edge`` for forbidden legs; omitted pairs use
-    PyVRP's ``missing_value`` (from ``missing_arc_*`` when set).
+    ``omit_unreachable_arcs`` (PyVRP) drops an edge whole when either component is unreachable;
+    omitted pairs get ``missing_arc_distance`` / ``missing_arc_duration`` per matrix.
     """
     return {
         TIME_LIMIT: 3.0,
