@@ -105,4 +105,12 @@ class JobGroupRecord:
     skip_penalty: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class VehicleGroupRecord:
+    """Vehicles sharing one unit of availability: at most ``max_active`` run a route."""
+
+    member_vehicle_indices: tuple[int, ...]
+    max_active: int = 1
+
+
 NodeRecord = DepotNodeRecord | JobNodeRecord

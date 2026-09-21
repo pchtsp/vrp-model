@@ -42,6 +42,34 @@ class JobGroup:
         return self._model._job_groups[self._index].skip_penalty
 
 
+class VehicleGroup:
+    """View of one vehicle group stored on :class:`~vrp_model.core.model.Model`."""
+
+    __slots__ = ("_model", "_index")
+
+    def __init__(self, model: Model, index: int) -> None:
+        if index < 0 or index >= len(model._vehicle_groups):
+            raise ValidationError("vehicle group index is out of range for this model")
+        self._model = model
+        self._index = index
+
+    @property
+    def index(self) -> int:
+        """Index of this group in :attr:`~vrp_model.core.model.Model.vehicle_groups` order."""
+        return self._index
+
+    @property
+    def member_vehicles(self) -> list[Vehicle]:
+        """Vehicles in this group (same order as registration)."""
+        g = self._model._vehicle_groups[self._index]
+        return [Vehicle(self._model, vi) for vi in g.member_vehicle_indices]
+
+    @property
+    def max_active(self) -> int:
+        """Most members of this group that may run a route at once."""
+        return self._model._vehicle_groups[self._index].max_active
+
+
 class PickupDelivery:
     """View of one pickup–delivery pair stored on :class:`~vrp_model.core.model.Model`."""
 
@@ -124,6 +152,11 @@ class Vehicle:
         if idx < 0 or idx >= len(model._vehicles):
             raise ValidationError("vehicle index is out of range for this model")
         self._idx = idx
+
+    @property
+    def index(self) -> int:
+        """Index of this vehicle in :attr:`~vrp_model.core.model.Model.vehicles` order."""
+        return self._idx
 
     @property
     def label(self) -> str | None:

@@ -19,13 +19,14 @@ from vrp_model.core.records import (
     JobNodeRecord,
     NodeRecord,
     PickupDeliveryRecord,
+    VehicleGroupRecord,
     VehicleRecord,
 )
 from vrp_model.core.solution import Route, Solution
 from vrp_model.core.storage import normalize_load, skills_to_frozen
 from vrp_model.core.time_window_flex import TimeWindowFlex
 from vrp_model.core.travel_edges import TRAVEL_COST_INF, TravelEdgeAttrs, TravelEdgesMap
-from vrp_model.core.views import Depot, Job, JobGroup, PickupDelivery, Vehicle
+from vrp_model.core.views import Depot, Job, JobGroup, PickupDelivery, Vehicle, VehicleGroup
 from vrp_model.utils.distance import euclidean_int
 from vrp_model.validation import consistency, feasibility, structure
 
@@ -68,6 +69,7 @@ class Feature(Enum):
     MAX_NODE_SLACK = auto()
     JOB_GROUPS = auto()
     JOB_COMPATIBILITY = auto()
+    VEHICLE_GROUPS = auto()
 
 
 class Model:
@@ -79,6 +81,7 @@ class Model:
         "_pickup_deliveries",
         "_job_groups",
         "_job_type_incompatibilities",
+        "_vehicle_groups",
         "_solution",
         "_travel_edges",
     )
@@ -89,12 +92,17 @@ class Model:
         self._pickup_deliveries: list[PickupDeliveryRecord] = []
         self._job_groups: list[JobGroupRecord] = []
         self._job_type_incompatibilities: list[tuple[int, int]] = []
+        self._vehicle_groups: list[VehicleGroupRecord] = []
         self._solution: Solution | None = None
         self._travel_edges: TravelEdgesMap = {}
 
     def _require_view_on_model(self, view: Depot | Job) -> None:
         if view._model is not self:
             raise ValidationError("depot or job view must belong to this model")
+
+    def _require_vehicle_on_model(self, view: Vehicle) -> None:
+        if view._model is not self:
+            raise ValidationError("vehicle view must belong to this model")
 
     @property
     def depots(self) -> Iterator[Depot]:
@@ -335,6 +343,34 @@ class Model:
         """Registered incompatible ``(type1, type2)`` pairs (copy)."""
         return list(self._job_type_incompatibilities)
 
+    def add_vehicle_group(
+        self,
+        vehicles: Sequence[Vehicle],
+        *,
+        max_active: int = 1,
+    ) -> VehicleGroup:
+        """Register vehicles sharing one unit of availability (at most ``max_active`` used).
+
+        The typical use is one real unit modeled as several alternative vehicles, only one
+        of which may run a route. Semantic constraints (member validity, disjoint groups)
+        are enforced in :meth:`validate` only.
+        """
+        indices: list[int] = []
+        for v in vehicles:
+            self._require_vehicle_on_model(v)
+            indices.append(v.index)
+        if len(indices) != len(set(indices)):
+            raise ValidationError("vehicle group members must be distinct vehicles")
+        rec = VehicleGroupRecord(member_vehicle_indices=tuple(indices), max_active=int(max_active))
+        self._vehicle_groups.append(rec)
+        return VehicleGroup(self, len(self._vehicle_groups) - 1)
+
+    @property
+    def vehicle_groups(self) -> Iterator[VehicleGroup]:
+        """Yield vehicle group views in registration order."""
+        for i in range(len(self._vehicle_groups)):
+            yield VehicleGroup(self, i)
+
     def validate(self) -> None:
         """Run structure, consistency, and feasibility checks (may normalize travel edges)."""
         structure.validate(self)
@@ -407,6 +443,9 @@ class Model:
 
         if self._job_type_incompatibilities:
             features.add(Feature.JOB_COMPATIBILITY)
+
+        if self._vehicle_groups:
+            features.add(Feature.VEHICLE_GROUPS)
 
         return frozenset(features)
 
@@ -566,6 +605,16 @@ class Model:
                     return False
         return True
 
+    def _vehicle_group_usage_ok(self, sol: Solution) -> bool:
+        if not self._vehicle_groups:
+            return True
+        used = Counter(route.vehicle.index for route in sol.routes if route.jobs)
+        for g in self._vehicle_groups:
+            active = sum(used.get(vi, 0) for vi in g.member_vehicle_indices)
+            if active > g.max_active:
+                return False
+        return True
+
     def _job_compatibility_ok(self, sol: Solution) -> bool:
         if not self._job_type_incompatibilities:
             return True
@@ -661,6 +710,8 @@ class Model:
         if not self._job_group_coverage_ok(visit_by_node):
             return False
         if not self._job_compatibility_ok(sol):
+            return False
+        if not self._vehicle_group_usage_ok(sol):
             return False
         if not self._visit_count_keys_are_job_nodes(visit_by_node):
             return False

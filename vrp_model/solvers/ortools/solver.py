@@ -247,6 +247,7 @@ class ORToolsSolver(Solver):
             Feature.MAX_NODE_SLACK,
             Feature.JOB_GROUPS,
             Feature.JOB_COMPATIBILITY,
+            Feature.VEHICLE_GROUPS,
         },
     )
 
@@ -500,6 +501,12 @@ class ORToolsSolver(Solver):
                 )
             for a, b in model._job_type_incompatibilities:
                 routing.AddHardTypeIncompatibility(dense[a], dense[b])
+
+        if model._vehicle_groups:
+            cp_solver = routing.solver()
+            for vg in model._vehicle_groups:
+                active = [routing.ActiveVehicleVar(int(vi)) for vi in vg.member_vehicle_indices]
+                cp_solver.Add(cp_solver.Sum(active) <= int(vg.max_active))
 
         params = pywrapcp.DefaultRoutingSearchParameters()
         opts = self._options
