@@ -2,7 +2,7 @@
 
 Solver-agnostic vehicle routing: a canonical [`Model`](vrp_model/core/model.py), layered **validation**, automatic **feature detection**, and pluggable backends. Entities reference each other via view objects (`Depot`, `Vehicle`, `Job`) on the same model. Optional **`label`** is for display/export only.
 
-**Python:** 3.11+ · **Core dependency:** [`vrplib`](https://pypi.org/project/vrplib/) (instance I/O).
+**Python:** 3.11+ (CI tests 3.12 and 3.13) · **Core dependency:** [`vrplib`](https://pypi.org/project/vrplib/) (instance I/O).
 
 ## Installation
 
@@ -60,39 +60,80 @@ solver_cls = get("pyvrp")
 result = solver_cls({"time_limit": 2.0, "msg": False}).solve(model)
 ```
 
-Placeholder packages under `vrp_model/solvers/` (e.g. jsprit, vrpy) are **not** implemented; they are reserved for future work.
+### Solver options
+
+Every solver takes one options `dict`. Keys you omit get package defaults. Each backend reads the standard keys it supports and ignores the rest.
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `time_limit` | `3.0` | Wall-clock budget for the search, in seconds |
+| `seed` | `0` | Random seed |
+| `max_iterations` | `None` | Iteration cap (`None` leaves it to the solver) |
+| `gap_rel` / `gap_abs` | `None` | Relative / absolute optimality gap to stop at |
+| `msg` | `False` | Print solver progress |
+| `log_path` | `None` | File that receives progress logs (PyVRP) |
+| `missing_arc_distance` / `missing_arc_duration` | `None` | Cost used for arcs the model marks unreachable (`None` keeps each backend's own sentinel) |
+| `omit_unreachable_arcs` | `False` | PyVRP only: fill an arc's whole edge when either of its components is unreachable (see [PyVRP forbidden arcs](#model-assumptions-and-travel)) |
+
+Backend-specific keys:
+
+- **ortools:** `first_solution_strategy`, `local_search_metaheuristic` (OR-Tools enum values; `None` keeps the OR-Tools default)
+- **pyvrp:** `skill_incompatible_cost` (cost of arcs into jobs whose skills the vehicle lacks)
+- **vroom:** `exploration_level` (default `5`), `nb_threads` (default `4`)
+- **nextroute:** `time_anchor` (datetime that model time `0` maps to; default `2020-01-01T00:00Z`), `speed_mps` (fallback speed in m/s when travel is not matrix-only; default `30.0`)
 
 ### What is modeled (VRP in this package)
 
 Vehicle routing here means assigning jobs to vehicles (routes), respecting travel between unified **node ids** (depots and jobs), optional **capacity** dimensions, **time** logic (service durations, windows, and caps), **pickup–delivery** pairs, **job groups** (mutually exclusive alternatives via [`add_job_group`](vrp_model/core/model.py)), **job compatibility** (a `job_type` per job plus incompatible type pairs via [`add_job_type_incompatibility`](vrp_model/core/model.py); incompatible types never share a route), **vehicle groups** (vehicles sharing one unit of availability via [`add_vehicle_group`](vrp_model/core/model.py); at most `max_active` members run a route), depot topology, and fleet diversity. The canonical [`Model`](vrp_model/core/model.py) holds jobs, vehicles, optional pickup–delivery links, and sparse **travel** overrides; [`Feature`](vrp_model/core/model.py) summarizes which constraint families appear so solvers can declare compatibility.
 
-**Detection vs. adapters.** [`Model.detect_features()`](vrp_model/core/model.py) sets [`Feature`](vrp_model/core/model.py) from stored fields (e.g. any positive demand or non-empty vehicle capacity → `CAPACITY`; job or vehicle time windows → `TIME_WINDOWS`; soft penalties in [`TimeWindowFlex`](vrp_model/core/time_window_flex.py) → `FLEXIBLE_TIME_WINDOWS`). Other behavior—**service times**, Euclidean vs matrix travel, **primary optimization emphasis** (distance vs duration)—is not a `Feature` flag but is still passed through each solver adapter where the backend supports it.
+**Detection vs. adapters.** [`Model.detect_features()`](vrp_model/core/model.py) sets [`Feature`](vrp_model/core/model.py) from stored fields (e.g. any positive demand or non-empty vehicle capacity → `CAPACITY`; job or vehicle time windows → `TIME_WINDOWS`; soft penalties in [`TimeWindowFlex`](vrp_model/core/time_window_flex.py) → `FLEXIBLE_TIME_WINDOWS`). Other behavior, such as **service times** and Euclidean vs matrix travel, is not a `Feature` flag but is still passed through each solver adapter where the backend supports it.
 
 ### Solver capability matrix
 
 Before solving, [`Solver.solve`](vrp_model/solvers/base.py) runs [`Model.validate()`](vrp_model/core/model.py) and [`Model.check_solver_compatibility(solver)`](vrp_model/core/model.py), which raises [`SolverCapabilityError`](vrp_model/core/errors.py) if a declared [`Feature`](vrp_model/core/model.py) is missing from the solver’s `supported_features`. One row per modeled capability:
 
-| Feature | pyvrp | ortools | nextroute | vroom |
-|---------------|:-----:|:-------:|:---------:|:-----:|
-| Capacity (one or more resource dimensions; demands on jobs, caps on vehicles) | ✓ | ✓ | ✓ | ✓ |
-| Hard time windows at jobs | ✓ | ✓ | ✓ | ✓ |
-| Hard time windows at vehicles (shift / availability) | ✓ | ✓ | ✓ | ✓ |
-| Pickup–delivery pairs (precedence and same vehicle) | ✓ | ✓ | ✓ | ✓ |
-| Multi-depot (vehicles may start/end at different depots) | ✓ | ✓ | ✓ | ✓ |
-| Heterogeneous fleet (distinct vehicle definitions) | ✓ | ✓ | ✓ | ✓ |
-| Service time at jobs (added into time accounting) | ✓ | ✓ | ✓ | ✓ |
-| Vehicle fixed use cost (activation / fixed cost per route) | ✓ | ✓ | ✓ | ✓ |
-| Maximum route distance per vehicle | ✓ | ✓ | ✓ | ✓ |
-| Maximum route duration / shift length per vehicle | ✓ | ✓ | ✓ | ✓ |
-| Optional jobs / prize-collecting (mandatory vs skip penalty via `prize`) | ✓ | ✓ | ✗ | ✗ |
-| Job groups (mutually exclusive job alternatives) | ✓ | ✓ | ✗ | ✗ |
-| Job compatibility (jobs of incompatible `job_type`s never share a route) | ✗ | ✓ | ✗ | ✗ |
-| Flexible time windows (linear soft penalties via `TimeWindowFlex`) | ✗ | ✓ | ✗ | ✗ |
-| Route overtime (extra duration allowed + unit penalty on overage) | ✓ | ✓ | ✗ | ✗ |
-| Skills (jobs require a subset of vehicle skills) | ✓ | ✓ | ✓ | ✓ |
-| Maximum wait / time slack at nodes (`max_slack_time` on vehicles) | ✗ | ✓ | ✗ | ✗ |
+| Capability | `Feature` | pyvrp | ortools | nextroute | vroom |
+|------------|-----------|:-----:|:-------:|:---------:|:-----:|
+| Capacity (one or more resource dimensions; demands on jobs, caps on vehicles) | `CAPACITY` | ✓ | ✓ | ✓ | ✓ |
+| Hard time windows at jobs | `TIME_WINDOWS` | ✓ | ✓ | ✓ | ✓ |
+| Hard time windows at vehicles (shift / availability) | `TIME_WINDOWS` | ✓ | ✓ | ✓ | ✓ |
+| Pickup–delivery pairs (precedence and same vehicle) | `PICKUP_DELIVERY` | ✓ | ✓ | ✓ | ✓ |
+| Multi-depot (vehicles may start/end at different depots) | `MULTI_DEPOT` | ✓ | ✓ | ✓ | ✓ |
+| Heterogeneous fleet (distinct vehicle definitions) | `HETEROGENEOUS_FLEET` | ✓ | ✓ | ✓ | ✓ |
+| Service time at jobs (added into time accounting) | — | ✓ | ✓ | ✓ | ✓ |
+| Vehicle fixed use cost (activation / fixed cost per route) | `VEHICLE_FIXED_COST` | ✓ | ✓ | ✓ | ✓ |
+| Maximum route distance per vehicle | `MAX_ROUTE_DISTANCE` | ✓ | ✓ | ✓ | ✓ |
+| Maximum route duration / shift length per vehicle | `MAX_ROUTE_TIME` | ✓ | ✓ | ✓ | ✓ |
+| Skills (jobs require a subset of vehicle skills) | `SKILLS` | ✓ | ✓ | ✓ | ✓ |
+| Optional jobs / prize-collecting (mandatory vs skip penalty via `prize`) | `PRIZE_COLLECTING` | ✓ | ✓ | ✗ | ✗ |
+| Job groups (mutually exclusive job alternatives) | `JOB_GROUPS` | ✓ | ✓ | ✗ | ✗ |
+| Route overtime (extra duration allowed + unit penalty on overage) | `ROUTE_OVERTIME` | ✓ | ✓ | ✗ | ✗ |
+| Job compatibility (jobs of incompatible `job_type`s never share a route) | `JOB_COMPATIBILITY` | ✗ | ✓ | ✗ | ✗ |
+| Vehicle groups (at most `max_active` vehicles of a group run a route) | `VEHICLE_GROUPS` | ✗ | ✓ | ✗ | ✗ |
+| Flexible time windows (linear soft penalties via `TimeWindowFlex`) | `FLEXIBLE_TIME_WINDOWS` | ✗ | ✓ | ✗ | ✗ |
+| Maximum wait / time slack at nodes (`max_slack_time` on vehicles) | `MAX_NODE_SLACK` | ✗ | ✓ | ✗ | ✗ |
 
-**What each backend minimizes (not a `Feature` flag):** [`ORToolsSolver`](vrp_model/solvers/ortools/solver.py) minimizes total **travel distance** (arc cost from the distance matrix; time is a separate dimension). [`PyVRPSolver`](vrp_model/solvers/pyvrp/solver.py) minimizes PyVRP’s objective on the edge costs it receives as distance, with duration driving time feasibility. [`VroomSolver`](vrp_model/solvers/vroom/solver.py) passes duration and distance matrices; VROOM’s default behavior is **duration**-oriented for optimization. [`NextrouteSolver`](vrp_model/solvers/nextroute/solver.py) uses the Nextroute engine’s objective on the constructed instance.
+### Objective function
+
+**Canonical objective.** [`Model.solution_cost()`](vrp_model/core/model.py) scores any attached solution the same way, whichever solver produced it. It is the sum of:
+
+- total **travel distance**
+- **`fixed_use_cost`** of every vehicle whose route serves at least one job
+- the **`prize`** of every optional job left unvisited (jobs inside a job group don't count here)
+- the **`skip_penalty`** of every optional job group with no member visited
+- linear **soft time-window penalties** from `TimeWindowFlex` on jobs and vehicles
+- **overtime charge**: time beyond `max_route_time` × `route_overtime_unit_cost`
+
+`max_slack_time` adds no cost.
+
+**What each backend minimizes.** Each backend optimizes its own objective, so `SolutionStatus.solver_reported_cost` can differ from `model.solution_cost()`. This matters most for VROOM and Nextroute, which minimize duration instead of distance.
+
+| Solver | Minimizes |
+|--------|-----------|
+| [`ORToolsSolver`](vrp_model/solvers/ortools/solver.py) | Travel **distance** (arc cost; time is a separate dimension) + vehicle fixed cost + disjunction penalties (prizes, group skip penalties) + soft time-window penalties + overtime |
+| [`PyVRPSolver`](vrp_model/solvers/pyvrp/solver.py) | Travel **distance** + vehicle `fixed_cost` + prizes of skipped jobs + `unit_overtime_cost`; duration only drives time feasibility |
+| [`VroomSolver`](vrp_model/solvers/vroom/solver.py) | Travel **duration** (VROOM's default per-hour cost) + vehicle fixed cost |
+| [`NextrouteSolver`](vrp_model/solvers/nextroute/solver.py) | Travel **duration** (Nextroute's default objective) + vehicle `activation_penalty` (fixed cost) |
 
 ## Model assumptions and travel
 
@@ -116,7 +157,14 @@ Use **`set_travel_edges`**, **`update_travel_edge`**, and **`clear_travel_edges`
 
 [`Solver.solve`](vrp_model/solvers/base.py) validates the model, checks capabilities, runs the backend, and attaches a [`Solution`](vrp_model/core/solution.py) to **`model.solution`**. The return value is [`SolutionStatus`](vrp_model/solvers/status.py) (mapped status, timing, stop reason, solver cost, etc.).
 
-Use **`model.solution_cost()`**, **`model.is_solution_feasible()`**, and **`model.unassigned_jobs()`** for metrics; these raise **`SolutionUnavailableError`** if no solution is attached.
+Metrics on the attached solution:
+
+- **`model.solution_cost()`**: the canonical objective (see [Objective function](#objective-function))
+- **`model.solution_travel_distance()`**: total leg distance only
+- **`model.unassigned_jobs()`** / **`model.mandatory_unassigned_jobs()`**: jobs left unvisited, all of them or only the mandatory ones
+- **`model.is_solution_feasible()`**: checks, independently of the solver, that routes start and end at their vehicles' depots, no job is visited twice, every mandatory job is visited, and capacity, skills, hard time windows, route limits, pickup–delivery pairs, job groups, vehicle groups and job compatibility all hold
+
+These raise **`SolutionUnavailableError`** if no solution is attached.
 
 ## VRPLIB (`vrplib`)
 
@@ -143,10 +191,10 @@ With OR-Tools installed: `from vrp_model.solvers.ortools import ORToolsSolver` a
 ## Development
 
 ```bash
-uv sync --group dev --extra pyvrp    # CI uses this set
+uv sync --all-extras --group dev     # same set as CI
 uv run python -m unittest discover -s tests
 uv run ruff check vrp_model tests && uv run ruff format vrp_model tests --check
 uv run ty check vrp_model
 ```
 
-Full solver coverage in tests requires installing the extras you care about (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml); default CI only adds `pyvrp`). Some tests skip backends that are not installed.
+[CI](.github/workflows/ci.yml) runs these checks with every solver extra installed, on Ubuntu, Windows and macOS with Python 3.12 and 3.13. Locally, tests for backends that aren't installed are skipped, so install all extras for full coverage.
