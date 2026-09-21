@@ -11,7 +11,6 @@ from vrp_model.core.model import Feature, Model, SolveStatus
 from vrp_model.core.solution import Route, Solution
 from vrp_model.core.views import Depot, Job, Vehicle
 from vrp_model.solvers._helpers import (
-    depot_node_ids_ordered,
     empty_instance_solution_status,
     job_node_ids_ordered,
     max_capacity_dims,
@@ -102,68 +101,21 @@ def _time_matrix_including_service(model: Model, leg: list[list[int]]) -> list[l
     return out
 
 
-def _single_depot_topology(model: Model) -> bool:
-    return len(depot_node_ids_ordered(model)) <= 1
+def _restrict_vehicles_by_skills(routing: Any, manager: Any, model: Model) -> None:
+    """Allow each skill-requiring job only on vehicles that cover its required skills.
 
-
-def _any_job_requires_skills(model: Model) -> bool:
-    for row in model._nodes:
-        if row.kind == NodeKind.JOB and bool(row.as_job().skills_required):
-            return True
-    return False
-
-
-def _register_matrix_or_vehicle_transits(
-    routing: Any,
-    manager: Any,
-    matrix: list[list[int]],
-    model: Model,
-    *,
-    uniform: bool,
-) -> list[int]:
-    """Return list of transit callback indices (one per vehicle).
-
-    Uses :meth:`RegisterTransitMatrix` only when a single shared matrix is valid (one depot
-    and no job skills). Otherwise registers per-vehicle callbacks (multi-depot routing and/or
-    skills via forbidden arcs — ``SetAllowedVehiclesForIndex`` is not reliably exposed for
-    Python on all platforms).
+    ``SetAllowedVehiclesForIndex`` takes an ``absl::Span<const int>`` that the Python SWIG
+    wrapper cannot convert, so the node's vehicle variable is restricted directly instead
+    (``-1`` keeps the job skippable when it is in a disjunction).
     """
-    pywrapcp = PyWrapCP
-    assert pywrapcp is not None
-    nveh = len(model._vehicles)
-    depot_ids = frozenset(depot_node_ids_ordered(model))
-
-    if uniform:
-        mat_list = [[int(matrix[i][j]) for j in range(len(matrix))] for i in range(len(matrix))]
-        shared = int(routing.RegisterTransitMatrix(mat_list))
-        return [shared] * nveh
-
-    indices: list[int] = []
-    for vi in range(nveh):
-        veh = model._vehicles[vi]
-        end_n = veh.end_depot_node_id
-        if end_n is None:
-            end_n = veh.start_depot_node_id
-        vskills = veh.skills
-
-        def make_transit(end_depot: int, sk: frozenset[int]) -> object:
-            def transit_cb(from_index: int, to_index: int) -> int:
-                fn = manager.IndexToNode(from_index)
-                tn = manager.IndexToNode(to_index)
-                if tn in depot_ids and tn != end_depot:
-                    return ORTOOLS_TRANSIT_CAP
-                row_t = model._nodes[tn]
-                if row_t.kind == NodeKind.JOB:
-                    req = row_t.as_job().skills_required
-                    if req and not req <= sk:
-                        return ORTOOLS_TRANSIT_CAP
-                return int(matrix[fn][tn])
-
-            return transit_cb
-
-        idx = int(routing.RegisterTransitCallback(make_transit(end_n, vskills)))
-        indices.append(idx)
-    return indices
+    for node_id, row in enumerate(model._nodes):
+        if row.kind != NodeKind.JOB:
+            continue
+        req = row.as_job().skills_required
+        if not req:
+            continue
+        allowed = [vi for vi, veh in enumerate(model._vehicles) if req <= veh.skills]
+        routing.VehicleVar(manager.NodeToIndex(node_id)).SetValues([-1, *allowed])
 
 
 def _needs_time_dimension(model: Model) -> bool:
@@ -290,17 +242,10 @@ class ORToolsSolver(Solver):
             missing_arc_duration=opts.get(MISSING_ARC_DURATION),
         )
         time_mat = _time_matrix_including_service(model, leg_dur)
-        uniform = _single_depot_topology(model) and not _any_job_requires_skills(model)
 
-        dist_cb_indices = _register_matrix_or_vehicle_transits(
-            routing,
-            manager,
-            dist_mat,
-            model,
-            uniform=uniform,
-        )
-        for v in range(nveh):
-            routing.SetArcCostEvaluatorOfVehicle(dist_cb_indices[v], v)
+        dist_cb = int(routing.RegisterTransitMatrix(dist_mat))
+        routing.SetArcCostEvaluatorOfAllVehicles(dist_cb)
+        _restrict_vehicles_by_skills(routing, manager, model)
 
         for v in range(nveh):
             routing.SetFixedCostOfVehicle(int(model._vehicles[v].fixed_use_cost), v)
@@ -310,15 +255,8 @@ class ORToolsSolver(Solver):
         need_dist_span = _needs_distance_span_dimension(model)
 
         if need_dist_span:
-            dist_dim_cbs = _register_matrix_or_vehicle_transits(
-                routing,
-                manager,
-                dist_mat,
-                model,
-                uniform=uniform,
-            )
-            routing.AddDimensionWithVehicleTransits(
-                dist_dim_cbs,
+            routing.AddDimension(
+                dist_cb,
                 0,  # slack_max
                 horizon,  # capacity
                 True,  # fix_start_cumul_to_zero
@@ -331,18 +269,12 @@ class ORToolsSolver(Solver):
                     dist_dim.SetSpanUpperBoundForVehicle(int(cap_d), vi)
 
         if need_time:
-            time_cb_indices = _register_matrix_or_vehicle_transits(
-                routing,
-                manager,
-                time_mat,
-                model,
-                uniform=uniform,
-            )
+            time_cb = int(routing.RegisterTransitMatrix(time_mat))
             slack_max = _time_slack_max(model, horizon)
             # fix_start_cumul_to_zero must stay False: route start times are absolute
             # clock values, so a vehicle shift may legitimately begin after time 0.
-            routing.AddDimensionWithVehicleTransits(
-                time_cb_indices,
+            routing.AddDimension(
+                time_cb,
                 slack_max,
                 horizon,  # capacity
                 False,  # fix_start_cumul_to_zero
@@ -507,7 +439,6 @@ class ORToolsSolver(Solver):
             for vg in model._vehicle_groups:
                 active = [routing.ActiveVehicleVar(int(vi)) for vi in vg.member_vehicle_indices]
                 cp_solver.Add(cp_solver.Sum(active) <= int(vg.max_active))
-
         params = pywrapcp.DefaultRoutingSearchParameters()
         opts = self._options
         tl = float(opts[TIME_LIMIT])
