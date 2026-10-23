@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from typing import IO, Any
 
@@ -18,7 +18,7 @@ def fileno(file_or_fd: IO[Any] | int) -> int:
 
 
 @contextmanager
-def stdout_redirected(to: IO[Any], stdout: IO[Any] | None = None) -> Iterator[IO[Any]]:
+def stdout_redirected(to: IO[Any], stdout: IO[Any] | None = None) -> Generator[IO[Any]]:
     """Send everything written to ``stdout`` (default ``sys.stdout``) into ``to``.
 
     When ``stdout`` exposes a real file descriptor, it is ``dup2``-ed onto ``to`` so output from
