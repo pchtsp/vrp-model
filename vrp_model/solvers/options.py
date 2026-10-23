@@ -56,7 +56,8 @@ def default_solver_options() -> dict[str, object]:
 
     ``None`` means “leave to the solver” where applicable (gaps / iteration cap).
     ``time_limit`` is in seconds (wall-clock budget for the search loop).
-    ``msg`` enables progress messages; ``log_path`` (if set) receives PyVRP progress logs.
+    ``msg`` enables progress messages; ``log_path`` (if set) receives PyVRP / OR-Tools
+    progress logs.
     ``missing_arc_distance`` / ``missing_arc_duration`` override the backend cost used when the
     canonical model marks an arc unreachable (``TRAVEL_COST_INF``); ``None`` keeps each solver's
     built-in default (e.g. PyVRP ``MAX_VALUE`` scale, OR-Tools transit cap, VROOM uint32 max).

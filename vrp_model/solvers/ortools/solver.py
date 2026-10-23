@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import sys
 import time
+from pathlib import Path
 from typing import Any
 
 from vrp_model.core.errors import SolverNotInstalledError
@@ -17,7 +19,13 @@ from vrp_model.solvers._helpers import (
     solver_travel_int,
 )
 from vrp_model.solvers.base import Solver
-from vrp_model.solvers.options import MISSING_ARC_DISTANCE, MISSING_ARC_DURATION, MSG, TIME_LIMIT
+from vrp_model.solvers.options import (
+    LOG_PATH,
+    MISSING_ARC_DISTANCE,
+    MISSING_ARC_DURATION,
+    MSG,
+    TIME_LIMIT,
+)
 from vrp_model.solvers.ortools.bindings import PyWrapCP
 from vrp_model.solvers.ortools.options import (
     FIRST_SOLUTION_STRATEGY,
@@ -26,6 +34,7 @@ from vrp_model.solvers.ortools.options import (
     merge_ortools_solver_options,
 )
 from vrp_model.solvers.status import SolutionStatus, SolverStopReason
+from vrp_model.utils.redirect import stdout_redirected
 
 # OR-Tools transit values must stay within practical int32-friendly range.
 ORTOOLS_TRANSIT_CAP = 2_000_000_000
@@ -452,10 +461,22 @@ class ORToolsSolver(Solver):
         if isinstance(ls, int):
             params.local_search_metaheuristic = ls
 
-        if opts[MSG]:
+        log_path = opts[LOG_PATH]
+        if opts[MSG] or log_path is not None:
             params.log_search = True
 
-        assignment = routing.SolveWithParameters(params)
+        if log_path is None:
+            assignment = routing.SolveWithParameters(params)
+        else:
+            # OR-Tools logs from C++ straight to the process fds; redirect them to the file.
+            path = Path(log_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with (
+                open(path, "a", encoding="utf-8") as f,
+                stdout_redirected(f, sys.stdout),
+                stdout_redirected(f, sys.stderr),
+            ):
+                assignment = routing.SolveWithParameters(params)
         elapsed = time.perf_counter() - t0
 
         if assignment is None:

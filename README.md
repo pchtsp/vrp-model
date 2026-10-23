@@ -71,7 +71,7 @@ Every solver takes one options `dict`. Keys you omit get package defaults. Each 
 | `max_iterations` | `None` | Iteration cap (`None` leaves it to the solver) |
 | `gap_rel` / `gap_abs` | `None` | Relative / absolute optimality gap to stop at |
 | `msg` | `False` | Print solver progress |
-| `log_path` | `None` | File that receives progress logs (PyVRP) |
+| `log_path` | `None` | File that receives progress logs (PyVRP, OR-Tools) |
 | `missing_arc_distance` / `missing_arc_duration` | `None` | Cost used for arcs the model marks unreachable (`None` keeps each backend's own sentinel) |
 | `omit_unreachable_arcs` | `False` | PyVRP only: fill an arc's whole edge when either of its components is unreachable (see [PyVRP forbidden arcs](#model-assumptions-and-travel)) |
 

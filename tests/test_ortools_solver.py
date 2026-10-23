@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import tempfile
 import unittest
 
 from tests._limits import ORTOOLS_TIME_LIMIT
@@ -80,6 +81,26 @@ class TestORToolsSolverMsgOption(unittest.TestCase):
 
         output = bytes(captured).decode(errors="replace")
         self.assertNotIn("search.cc", output)
+
+    def test_log_path_writes_search_log_to_file(self) -> None:
+        m = Model()
+        d = m.add_depot(location=(0.0, 0.0))
+        m.add_vehicle([10], d)
+        m.add_job(1, location=(1.0, 0.0), label="a")
+        m.validate()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = os.path.join(tmp, "sub", "ortools.log")
+            with _capture_fd(2) as captured:
+                status = ORToolsSolver(
+                    {"time_limit": ORTOOLS_TIME_LIMIT, "msg": False, "log_path": log_path},
+                ).solve(m)
+            with open(log_path, encoding="utf-8") as f:
+                logged = f.read()
+
+        self.assertTrue(status.solution_found)
+        self.assertIn("search.cc", logged)
+        self.assertNotIn("search.cc", bytes(captured).decode(errors="replace"))
 
 
 @unittest.skipIf(not _ORTOOLS_INSTALLED, "ortools extra not installed")
